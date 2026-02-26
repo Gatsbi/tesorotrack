@@ -1,25 +1,37 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
+import { useAuth } from '../AuthProvider'
 
 export default function PortfolioPage() {
+  const { user, loading: authLoading } = useAuth()
   const [items, setItems] = useState([])
-  const [sets, setSets] = useState([])
+  const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [search, setSearch] = useState('')
   const [searchResults, setSearchResults] = useState([])
-  const [form, setForm] = useState({ set_id: '', quantity: 1, price_paid: '', condition: 'New Sealed', notes: '' })
   const [selectedSet, setSelectedSet] = useState(null)
+  const [form, setForm] = useState({ quantity: 1, price_paid: '', condition: 'New Sealed', notes: '' })
+  const [saving, setSaving] = useState(false)
 
-  // Load portfolio from localStorage (simple persistence without auth)
   useEffect(() => {
-    const saved = localStorage.getItem('tesorotrack_portfolio')
-    if (saved) setItems(JSON.parse(saved))
-  }, [])
+    if (!authLoading) {
+      if (!user) {
+        window.location.href = '/login'
+      } else {
+        loadPortfolio()
+      }
+    }
+  }, [user, authLoading])
 
-  const saveItems = (newItems) => {
-    setItems(newItems)
-    localStorage.setItem('tesorotrack_portfolio', JSON.stringify(newItems))
+  async function loadPortfolio() {
+    const { data } = await supabase
+      .from('portfolios')
+      .select(`*, sets(id, name, category, theme, avg_sale_price, retail_price)`)
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+    setItems(data || [])
+    setLoading(false)
   }
 
   useEffect(() => {
@@ -35,39 +47,38 @@ export default function PortfolioPage() {
     return () => clearTimeout(timer)
   }, [search])
 
-  const addItem = () => {
-    if (!selectedSet) return
-    const newItem = {
-      id: Date.now(),
+  const addItem = async () => {
+    if (!selectedSet || !user) return
+    setSaving(true)
+    const { error } = await supabase.from('portfolios').insert({
+      user_id: user.id,
       set_id: selectedSet.id,
-      set_name: selectedSet.name,
-      category: selectedSet.category,
-      theme: selectedSet.theme,
-      current_price: selectedSet.avg_sale_price,
       quantity: parseInt(form.quantity),
       price_paid: parseFloat(form.price_paid) || 0,
       condition: form.condition,
       notes: form.notes,
       date_added: new Date().toISOString().split('T')[0],
+    })
+    if (!error) {
+      await loadPortfolio()
+      setShowAdd(false)
+      setForm({ quantity: 1, price_paid: '', condition: 'New Sealed', notes: '' })
+      setSelectedSet(null)
+      setSearch('')
     }
-    saveItems([...items, newItem])
-    setShowAdd(false)
-    setForm({ set_id: '', quantity: 1, price_paid: '', condition: 'New Sealed', notes: '' })
-    setSelectedSet(null)
-    setSearch('')
+    setSaving(false)
   }
 
-  const removeItem = (id) => {
-    saveItems(items.filter(i => i.id !== id))
+  const removeItem = async (id) => {
+    await supabase.from('portfolios').delete().eq('id', id)
+    setItems(items.filter(i => i.id !== id))
   }
 
-  const totalValue = items.reduce((s, i) => s + ((i.current_price || 0) * i.quantity), 0)
+  const totalValue = items.reduce((s, i) => s + ((i.sets?.avg_sale_price || 0) * i.quantity), 0)
   const totalInvested = items.reduce((s, i) => s + (i.price_paid * i.quantity), 0)
   const totalGain = totalValue - totalInvested
   const gainPct = totalInvested > 0 ? ((totalGain / totalInvested) * 100).toFixed(1) : 0
-
   const fmt = (n) => `$${parseFloat(n || 0).toFixed(2)}`
-  const catIcon = { 'Mega Construx': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }
 
   const inputStyle = {
     width: '100%', padding: '10px 14px', borderRadius: '8px',
@@ -75,20 +86,22 @@ export default function PortfolioPage() {
     fontSize: '14px', outline: 'none', background: 'var(--bg)',
   }
 
+  if (authLoading || loading) return (
+    <div style={{ textAlign: 'center', padding: '120px', color: 'var(--muted)', fontSize: '16px' }}>Loading...</div>
+  )
+
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '48px 40px' }}>
-      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '32px' }}>
         <div>
           <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--accent)', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '8px' }}>My Collection</div>
-          <h1 style={{ fontFamily: 'var(--display)', fontSize: '40px', fontWeight: 900, letterSpacing: '-1.5px' }}>Portfolio Tracker</h1>
-          <p style={{ fontSize: '15px', color: 'var(--muted)', marginTop: '6px' }}>Track what you own and what it's worth today.</p>
+          <h1 style={{ fontFamily: 'var(--display)', fontSize: '40px', fontWeight: 900, letterSpacing: '-1.5px' }}>Portfolio</h1>
+          <p style={{ fontSize: '14px', color: 'var(--muted)', marginTop: '4px' }}>Signed in as {user?.email}</p>
         </div>
         <button onClick={() => setShowAdd(true)} style={{
           background: 'var(--accent)', color: 'white', border: 'none',
           padding: '12px 24px', borderRadius: '10px', fontSize: '14px',
-          fontWeight: 700, cursor: 'pointer',
-          boxShadow: '0 4px 14px rgba(200,82,42,0.3)',
+          fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 14px rgba(200,82,42,0.3)',
         }}>+ Add Item</button>
       </div>
 
@@ -117,10 +130,7 @@ export default function PortfolioPage() {
 
       {/* Portfolio table */}
       {items.length === 0 ? (
-        <div style={{
-          textAlign: 'center', padding: '80px 40px',
-          background: 'var(--white)', borderRadius: '16px', border: '1.5px solid var(--border)',
-        }}>
+        <div style={{ textAlign: 'center', padding: '80px 40px', background: 'var(--white)', borderRadius: '16px', border: '1.5px solid var(--border)' }}>
           <div style={{ fontSize: '56px', marginBottom: '16px' }}>📦</div>
           <h2 style={{ fontFamily: 'var(--display)', fontSize: '24px', fontWeight: 900, marginBottom: '8px' }}>Your portfolio is empty</h2>
           <p style={{ color: 'var(--muted)', fontSize: '15px', marginBottom: '24px' }}>Add sets you own and we'll track their current market value.</p>
@@ -137,7 +147,8 @@ export default function PortfolioPage() {
             ))}
           </div>
           {items.map((item, i) => {
-            const currentVal = (item.current_price || 0) * item.quantity
+            const currentPrice = item.sets?.avg_sale_price || 0
+            const currentVal = currentPrice * item.quantity
             const investedVal = item.price_paid * item.quantity
             const gain = currentVal - investedVal
             const gainP = investedVal > 0 ? ((gain / investedVal) * 100).toFixed(1) : null
@@ -148,13 +159,13 @@ export default function PortfolioPage() {
                 background: i % 2 === 0 ? 'var(--white)' : 'var(--bg)', alignItems: 'center',
               }}>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: '13px' }}>{item.set_name}</div>
-                  <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>{item.category} · {item.theme}</div>
+                  <div style={{ fontWeight: 700, fontSize: '13px' }}>{item.sets?.name}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>{item.sets?.category} · {item.sets?.theme}</div>
                 </div>
                 <div style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: 600 }}>{item.condition}</div>
                 <div style={{ fontFamily: 'var(--mono)', fontSize: '13px' }}>{item.quantity}</div>
                 <div style={{ fontFamily: 'var(--mono)', fontSize: '13px' }}>{fmt(investedVal)}</div>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: '13px' }}>{item.current_price ? fmt(currentVal) : '—'}</div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: '13px' }}>{currentPrice ? fmt(currentVal) : '—'}</div>
                 <div>
                   <div style={{ fontFamily: 'var(--mono)', fontSize: '13px', color: gain >= 0 ? 'var(--green)' : 'var(--red)' }}>
                     {gain >= 0 ? '+' : ''}{fmt(gain)}
@@ -171,7 +182,7 @@ export default function PortfolioPage() {
         </div>
       )}
 
-      {/* Add item modal */}
+      {/* Add modal */}
       {showAdd && (
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
@@ -179,15 +190,14 @@ export default function PortfolioPage() {
         }} onClick={e => e.target === e.currentTarget && setShowAdd(false)}>
           <div style={{
             background: 'var(--white)', borderRadius: '20px', padding: '32px',
-            width: '480px', boxShadow: '0 24px 64px rgba(0,0,0,0.2)', position: 'relative',
+            width: '480px', boxShadow: '0 24px 64px rgba(0,0,0,0.2)',
           }}>
             <h2 style={{ fontFamily: 'var(--display)', fontSize: '24px', fontWeight: 900, marginBottom: '24px' }}>Add to Portfolio</h2>
 
             <div style={{ marginBottom: '16px', position: 'relative' }}>
               <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '6px' }}>Search Set</label>
               <input
-                type="text"
-                placeholder="Type a set name..."
+                type="text" placeholder="Type a set name..."
                 value={selectedSet ? selectedSet.name : search}
                 onChange={e => { setSearch(e.target.value); setSelectedSet(null) }}
                 style={inputStyle}
@@ -201,15 +211,12 @@ export default function PortfolioPage() {
                 }}>
                   {searchResults.map(s => (
                     <div key={s.id} onClick={() => { setSelectedSet(s); setSearch(s.name); setSearchResults([]) }}
-                      style={{
-                        padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid var(--border)',
-                        fontSize: '13px', fontWeight: 600,
-                      }}
+                      style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid var(--border)', fontSize: '13px', fontWeight: 600 }}
                       onMouseEnter={e => e.currentTarget.style.background = 'var(--surface)'}
                       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                     >
                       <div>{s.name}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 500 }}>{s.category} · {s.theme} {s.avg_sale_price ? `· Avg $${parseFloat(s.avg_sale_price).toFixed(2)}` : ''}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--muted)' }}>{s.category} · {s.theme} {s.avg_sale_price ? `· Avg $${parseFloat(s.avg_sale_price).toFixed(2)}` : ''}</div>
                     </div>
                   ))}
                 </div>
@@ -229,7 +236,7 @@ export default function PortfolioPage() {
 
             <div style={{ marginBottom: '16px' }}>
               <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '6px' }}>Condition</label>
-              <select value={form.condition} onChange={e => setForm({ ...form, condition: e.target.value })} style={{ ...inputStyle }}>
+              <select value={form.condition} onChange={e => setForm({ ...form, condition: e.target.value })} style={inputStyle}>
                 <option>New Sealed</option>
                 <option>Open Box</option>
                 <option>Used</option>
@@ -246,12 +253,12 @@ export default function PortfolioPage() {
                 flex: 1, padding: '12px', borderRadius: '10px', border: '1.5px solid var(--border)',
                 background: 'transparent', fontSize: '14px', fontWeight: 700, cursor: 'pointer',
               }}>Cancel</button>
-              <button onClick={addItem} disabled={!selectedSet} style={{
+              <button onClick={addItem} disabled={!selectedSet || saving} style={{
                 flex: 2, padding: '12px', borderRadius: '10px', border: 'none',
-                background: selectedSet ? 'var(--accent)' : 'var(--border)',
-                color: selectedSet ? 'white' : 'var(--muted)',
+                background: selectedSet && !saving ? 'var(--accent)' : 'var(--border)',
+                color: selectedSet && !saving ? 'white' : 'var(--muted)',
                 fontSize: '14px', fontWeight: 700, cursor: selectedSet ? 'pointer' : 'default',
-              }}>Add to Portfolio</button>
+              }}>{saving ? 'Saving...' : 'Add to Portfolio'}</button>
             </div>
           </div>
         </div>

@@ -1,5 +1,6 @@
 import './globals.css'
 import NavClient from './NavClient'
+import { AuthProvider } from './AuthProvider'
 
 export const metadata = {
   title: 'Tesoro Track — Know What Your Collection Is Worth',
@@ -10,9 +11,11 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body>
-        <NavClient />
-        <main>{children}</main>
-        <Footer />
+        <AuthProvider>
+          <NavClient />
+          <main>{children}</main>
+          <Footer />
+        </AuthProvider>
       </body>
     </html>
   )

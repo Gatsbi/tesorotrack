@@ -1,6 +1,13 @@
 'use client'
+import { useAuth } from './AuthProvider'
 
 export default function NavClient() {
+  const { user, signOut } = useAuth()
+
+  const handleSignOut = async () => {
+    await signOut()
+    window.location.href = '/'
+  }
   return (
     <nav style={{
       position: 'sticky', top: 0, zIndex: 100,
@@ -41,7 +48,7 @@ export default function NavClient() {
         ))}
       </div>
 
-      <div style={{ display: 'flex', gap: '10px' }}>
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
         <a href="/search" style={{
           fontFamily: 'var(--sans)', fontSize: '14px', fontWeight: 600,
           padding: '8px 18px', borderRadius: '8px', cursor: 'pointer',
@@ -49,13 +56,30 @@ export default function NavClient() {
           color: 'var(--muted)', textDecoration: 'none',
           display: 'inline-flex', alignItems: 'center', gap: '6px',
         }}>🔍 Search</a>
-        <a href="/portfolio" style={{
-          fontFamily: 'var(--sans)', fontSize: '14px', fontWeight: 700,
-          padding: '8px 18px', borderRadius: '8px', cursor: 'pointer',
-          background: 'var(--accent)', color: 'white', textDecoration: 'none',
-          display: 'inline-flex', alignItems: 'center',
-          boxShadow: '0 4px 14px rgba(200,82,42,0.3)',
-        }}>My Portfolio</a>
+        {user ? (
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <a href="/portfolio" style={{
+              fontFamily: 'var(--sans)', fontSize: '14px', fontWeight: 700,
+              padding: '8px 18px', borderRadius: '8px',
+              background: 'var(--accent)', color: 'white', textDecoration: 'none',
+              display: 'inline-flex', alignItems: 'center',
+              boxShadow: '0 4px 14px rgba(200,82,42,0.3)',
+            }}>My Portfolio</a>
+            <button onClick={handleSignOut} style={{
+              fontFamily: 'var(--sans)', fontSize: '13px', fontWeight: 600,
+              padding: '8px 14px', borderRadius: '8px', cursor: 'pointer',
+              border: '1.5px solid var(--border)', background: 'transparent', color: 'var(--muted)',
+            }}>Sign Out</button>
+          </div>
+        ) : (
+          <a href="/login" style={{
+            fontFamily: 'var(--sans)', fontSize: '14px', fontWeight: 700,
+            padding: '8px 18px', borderRadius: '8px',
+            background: 'var(--accent)', color: 'white', textDecoration: 'none',
+            display: 'inline-flex', alignItems: 'center',
+            boxShadow: '0 4px 14px rgba(200,82,42,0.3)',
+          }}>Sign In</a>
+        )}
       </div>
     </nav>
   )
