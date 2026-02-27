@@ -233,20 +233,22 @@ export async function GET(request) {
     });
   }
 
-  if (!EBAY_CLIENT_ID && !process.env.EBAY_CREDENTIALS_B64) return Response.json({ error: 'EBAY_APP_ID not set' }, { status: 500 });
   if (!SUPABASE_SERVICE_KEY) return Response.json({ error: 'SUPABASE_SERVICE_KEY not set' }, { status: 500 });
 
-  const tokenResult = await getEbayToken();
-  if (tokenResult.error) {
-    return Response.json({
-      error: 'eBay token failed',
-      detail: tokenResult.error,
-      httpStatus: tokenResult.status,
-      fullResponse: tokenResult.fullResponse,
-    }, { status: 500 });
+  // Use hardcoded token if available (2hr expiry), otherwise get via OAuth
+  let token;
+  if (process.env.EBAY_ACCESS_TOKEN) {
+    token = process.env.EBAY_ACCESS_TOKEN;
+  } else {
+    const tokenResult = await getEbayToken();
+    if (tokenResult.error) {
+      return Response.json({
+        error: 'eBay token failed - set EBAY_ACCESS_TOKEN env var as fallback',
+        detail: tokenResult.error,
+      }, { status: 500 });
+    }
+    token = tokenResult.token;
   }
-
-  const token = tokenResult.token;
 
   if (searchParams.get('debug') === 'true') {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
