@@ -25,13 +25,32 @@ function Footer() {
   return (
     <footer style={{
       background: 'var(--text)', color: 'rgba(255,255,255,0.5)',
-      padding: '48px 40px', marginTop: '80px',
+      padding: '48px 24px', marginTop: '80px',
     }}>
+      <style>{`
+        .footer-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr 1fr 1fr;
+          gap: 40px;
+          margin-bottom: 40px;
+        }
+        .footer-bottom {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        @media (max-width: 768px) {
+          .footer-grid { grid-template-columns: 1fr 1fr; gap: 24px; }
+        }
+        @media (max-width: 480px) {
+          .footer-grid { grid-template-columns: 1fr; gap: 20px; }
+          .footer-bottom { flex-direction: column; align-items: flex-start; }
+        }
+      `}</style>
       <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-        <div style={{
-          display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr',
-          gap: '40px', marginBottom: '40px',
-        }}>
+        <div className="footer-grid">
           <div>
             <div style={{
               fontFamily: 'var(--display)', fontWeight: 900, fontSize: '20px',
@@ -56,9 +75,8 @@ function Footer() {
             </div>
           ))}
         </div>
-        <div style={{
-          borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '24px',
-          fontSize: '12px', display: 'flex', justifyContent: 'space-between',
+        <div className="footer-bottom" style={{
+          borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '24px', fontSize: '12px',
         }}>
           <span>© 2026 Tesoro Track. Price data sourced from eBay sold listings.</span>
           <span>Not affiliated with eBay, LEGO, Mega Brands, or Funko.</span>
