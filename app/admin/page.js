@@ -15,10 +15,9 @@ export default function AdminPage() {
   const [reviewNote, setReviewNote] = useState({})
 
   useEffect(() => {
-    if (!authLoading) {
-      if (!user) { window.location.href = '/login'; return }
-      checkAdmin()
-    }
+    if (authLoading) return
+    if (!user) { window.location.href = '/login'; return }
+    checkAdmin()
   }, [user, authLoading])
 
   async function checkAdmin() {
@@ -37,7 +36,6 @@ export default function AdminPage() {
     setSubmissions(subData.data || [])
     setListings(listingData.data || [])
     setUsers(userData.data || [])
-
     const pending = (subData.data || []).filter(s => s.status === 'pending').length
     const activeListings = (listingData.data || []).filter(l => l.status === 'active').length
     setStats({ pending, activeListings, totalUsers: (userData.data || []).length })
@@ -45,7 +43,10 @@ export default function AdminPage() {
   }
 
   async function reviewSubmission(id, status) {
-    await supabase.from('set_submissions').update({ status, review_notes: reviewNote[id] || null, reviewed_at: new Date().toISOString(), reviewed_by: user.id }).eq('id', id)
+    await supabase.from('set_submissions').update({
+      status, review_notes: reviewNote[id] || null,
+      reviewed_at: new Date().toISOString(), reviewed_by: user.id
+    }).eq('id', id)
     setSubmissions(submissions.map(s => s.id === id ? { ...s, status } : s))
   }
 
@@ -57,23 +58,22 @@ export default function AdminPage() {
   const tabStyle = (t) => ({ padding: '10px 20px', borderRadius: '8px', border: 'none', fontFamily: 'var(--sans)', fontSize: '14px', fontWeight: 700, cursor: 'pointer', background: tab === t ? 'var(--accent)' : 'transparent', color: tab === t ? 'white' : 'var(--muted)' })
   const statusBadge = (s, colors) => { const c = colors[s] || ['var(--surface)', 'var(--muted)']; return <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '5px', background: c[0], color: c[1], textTransform: 'uppercase' }}>{s}</span> }
 
-  if (loading) return <div style={{ textAlign: 'center', padding: '120px', color: 'var(--muted)' }}>Loading admin panel...</div>
+  if (authLoading || loading) return (
+    <div style={{ textAlign: 'center', padding: '120px', color: 'var(--muted)' }}>Loading admin panel...</div>
+  )
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '48px 40px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '32px' }}>
-        <div>
-          <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--accent)', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '8px' }}>Admin</div>
-          <h1 style={{ fontFamily: 'var(--display)', fontSize: '36px', fontWeight: 900, letterSpacing: '-1px' }}>Dashboard</h1>
-        </div>
+      <div style={{ marginBottom: '32px' }}>
+        <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--accent)', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '8px' }}>Admin</div>
+        <h1 style={{ fontFamily: 'var(--display)', fontSize: '36px', fontWeight: 900, letterSpacing: '-1px' }}>Dashboard</h1>
       </div>
 
-      {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '32px' }}>
         {[
           { label: 'Pending Submissions', value: stats.pending, color: 'var(--yellow)', urgent: stats.pending > 0 },
           { label: 'Active Listings', value: stats.activeListings, color: 'var(--green)' },
-          { label: 'Total Users', value: stats.totalUsers, color: 'var(--accent2)' },
+          { label: 'Total Users', value: stats.totalUsers, color: 'var(--accent)' },
           { label: 'Total Submissions', value: submissions.length, color: 'var(--muted)' },
         ].map(s => (
           <div key={s.label} style={{ padding: '20px', borderRadius: '14px', background: 'var(--white)', border: `1.5px solid ${s.urgent ? 'var(--yellow)' : 'var(--border)'}` }}>
@@ -83,14 +83,12 @@ export default function AdminPage() {
         ))}
       </div>
 
-      {/* Tabs */}
       <div style={{ display: 'flex', gap: '4px', marginBottom: '24px', background: 'var(--surface)', borderRadius: '10px', padding: '4px', width: 'fit-content' }}>
         {[['submissions', `Submissions (${stats.pending} pending)`], ['listings', 'Listings'], ['users', 'Users']].map(([t, label]) => (
           <button key={t} onClick={() => setTab(t)} style={tabStyle(t)}>{label}</button>
         ))}
       </div>
 
-      {/* SUBMISSIONS */}
       {tab === 'submissions' && (
         <div style={{ display: 'grid', gap: '12px' }}>
           {submissions.length === 0 && <div style={{ textAlign: 'center', padding: '60px', background: 'var(--white)', borderRadius: '16px', border: '1.5px solid var(--border)', color: 'var(--muted)' }}>No submissions yet</div>}
@@ -106,15 +104,15 @@ export default function AdminPage() {
                     {sub.retail_price && ` · $${sub.retail_price}`}
                     {sub.piece_count && ` · ${sub.piece_count} pcs`}
                   </div>
-                  <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px' }}>Submitted by @{sub.profiles?.username} · {new Date(sub.created_at).toLocaleDateString()}</div>
+                  <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px' }}>by @{sub.profiles?.username} · {new Date(sub.created_at).toLocaleDateString()}</div>
                   {sub.notes && <div style={{ fontSize: '13px', marginTop: '8px', padding: '8px 12px', background: 'var(--surface)', borderRadius: '8px' }}>{sub.notes}</div>}
                 </div>
                 {statusBadge(sub.status, { pending: ['var(--yellow-light)', 'var(--yellow)'], approved: ['var(--green-light)', 'var(--green)'], rejected: ['var(--red-light)', 'var(--red)'] })}
               </div>
-
               {sub.status === 'pending' && (
                 <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                  <input type="text" placeholder="Review note (optional)" value={reviewNote[sub.id] || ''} onChange={e => setReviewNote({ ...reviewNote, [sub.id]: e.target.value })}
+                  <input type="text" placeholder="Review note (optional)" value={reviewNote[sub.id] || ''}
+                    onChange={e => setReviewNote({ ...reviewNote, [sub.id]: e.target.value })}
                     style={{ flex: 1, padding: '8px 12px', borderRadius: '8px', border: '1.5px solid var(--border)', fontFamily: 'var(--sans)', fontSize: '13px', outline: 'none', background: 'var(--bg)' }} />
                   <button onClick={() => reviewSubmission(sub.id, 'approved')} style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', background: 'var(--green)', color: 'white', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}>Approve</button>
                   <button onClick={() => reviewSubmission(sub.id, 'rejected')} style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', background: 'var(--red)', color: 'white', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}>Reject</button>
@@ -125,7 +123,6 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* LISTINGS */}
       {tab === 'listings' && (
         <div style={{ background: 'var(--white)', borderRadius: '14px', border: '1.5px solid var(--border)', overflow: 'hidden' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 80px', padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
@@ -145,7 +142,6 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* USERS */}
       {tab === 'users' && (
         <div style={{ background: 'var(--white)', borderRadius: '14px', border: '1.5px solid var(--border)', overflow: 'hidden' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 80px', padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>

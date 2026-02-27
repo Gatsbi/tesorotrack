@@ -31,13 +31,12 @@ export default function NavClient() {
         Tesoro Track
       </a>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
         {[
           { href: '/browse', label: 'Browse' },
           { href: '/marketplace', label: 'Marketplace' },
           { href: '/parts', label: 'Parts Exchange' },
           { href: '/trending', label: 'Trending' },
-          { href: '/submit-set', label: 'Submit a Set' },
           { href: '/about', label: 'About' },
         ].map(link => (
           <a key={link.href} href={link.href} style={{
@@ -53,21 +52,21 @@ export default function NavClient() {
 
       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
         <a href="/search" style={{
-          fontSize: '13px', fontWeight: 600, padding: '7px 14px', borderRadius: '7px',
+          fontSize: '13px', fontWeight: 600, padding: '7px 12px', borderRadius: '7px',
           border: '1.5px solid var(--border)', background: 'transparent',
           color: 'var(--muted)', textDecoration: 'none',
-          display: 'inline-flex', alignItems: 'center', gap: '5px',
+          display: 'inline-flex', alignItems: 'center', gap: '4px',
         }}>🔍 Search</a>
 
         {user ? (
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <a href="/messages" style={{
-              fontSize: '13px', fontWeight: 600, padding: '7px 14px', borderRadius: '7px',
+              fontSize: '13px', fontWeight: 600, padding: '7px 12px', borderRadius: '7px',
               border: '1.5px solid var(--border)', background: 'transparent',
               color: 'var(--muted)', textDecoration: 'none',
-            }}>💬 Messages</a>
+            }}>💬</a>
             <a href="/portfolio" style={{
-              fontSize: '13px', fontWeight: 600, padding: '7px 14px', borderRadius: '7px',
+              fontSize: '13px', fontWeight: 600, padding: '7px 12px', borderRadius: '7px',
               border: '1.5px solid var(--border)', background: 'transparent',
               color: 'var(--muted)', textDecoration: 'none',
             }}>📦 Portfolio</a>
@@ -77,7 +76,7 @@ export default function NavClient() {
               boxShadow: '0 3px 10px rgba(200,82,42,0.3)',
             }}>My Account</a>
             <button onClick={handleSignOut} style={{
-              fontSize: '13px', fontWeight: 600, padding: '7px 12px', borderRadius: '7px',
+              fontSize: '13px', fontWeight: 600, padding: '7px 10px', borderRadius: '7px',
               border: '1.5px solid var(--border)', background: 'transparent',
               color: 'var(--muted)', cursor: 'pointer',
             }}>Sign Out</button>

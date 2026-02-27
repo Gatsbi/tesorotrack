@@ -14,22 +14,23 @@ export default function PortfolioPage() {
   const [form, setForm] = useState({ quantity: 1, price_paid: '', condition: 'New Sealed', notes: '' })
   const [saving, setSaving] = useState(false)
 
+  // Wait for auth to finish loading before deciding to redirect
   useEffect(() => {
-    if (!authLoading) {
-      if (!user) {
-        window.location.href = '/login'
-      } else {
-        loadPortfolio()
-      }
+    if (authLoading) return
+    if (!user) {
+      window.location.href = '/login'
+      return
     }
+    loadPortfolio()
   }, [user, authLoading])
 
   async function loadPortfolio() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('portfolios')
       .select(`*, sets(id, name, category, theme, avg_sale_price, retail_price)`)
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
+    if (error) console.error('Portfolio load error:', error)
     setItems(data || [])
     setLoading(false)
   }
@@ -59,7 +60,10 @@ export default function PortfolioPage() {
       notes: form.notes,
       date_added: new Date().toISOString().split('T')[0],
     })
-    if (!error) {
+    if (error) {
+      console.error('Add item error:', error)
+      alert('Error adding item: ' + error.message)
+    } else {
       await loadPortfolio()
       setShowAdd(false)
       setForm({ quantity: 1, price_paid: '', condition: 'New Sealed', notes: '' })
@@ -86,7 +90,8 @@ export default function PortfolioPage() {
     fontSize: '14px', outline: 'none', background: 'var(--bg)',
   }
 
-  if (authLoading || loading) return (
+  // Show loading while auth is initializing
+  if (authLoading || (loading && user)) return (
     <div style={{ textAlign: 'center', padding: '120px', color: 'var(--muted)', fontSize: '16px' }}>Loading...</div>
   )
 

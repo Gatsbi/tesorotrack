@@ -15,21 +15,18 @@ export default function WatchlistPage() {
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    if (!authLoading) {
-      if (!user) {
-        window.location.href = '/login'
-      } else {
-        loadWatchlist()
-      }
-    }
+    if (authLoading) return
+    if (!user) { window.location.href = '/login'; return }
+    loadWatchlist()
   }, [user, authLoading])
 
   async function loadWatchlist() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('watchlists')
       .select(`*, sets(id, name, category, theme, avg_sale_price, retail_price, is_retired)`)
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
+    if (error) console.error('Watchlist load error:', error)
     setItems(data || [])
     setLoading(false)
   }
@@ -55,7 +52,10 @@ export default function WatchlistPage() {
       set_id: selectedSet.id,
       target_price: parseFloat(targetPrice) || null,
     })
-    if (!error) {
+    if (error) {
+      console.error('Watchlist add error:', error)
+      alert('Error: ' + error.message)
+    } else {
       await loadWatchlist()
       setShowAdd(false)
       setSelectedSet(null)
@@ -76,14 +76,13 @@ export default function WatchlistPage() {
     return Math.round(((current - retail) / retail) * 100)
   }
   const catIcon = { 'Mega Construx': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }
-
   const inputStyle = {
     width: '100%', padding: '10px 14px', borderRadius: '8px',
     border: '1.5px solid var(--border)', fontFamily: 'var(--sans)',
     fontSize: '14px', outline: 'none', background: 'var(--bg)',
   }
 
-  if (authLoading || loading) return (
+  if (authLoading || (loading && user)) return (
     <div style={{ textAlign: 'center', padding: '120px', color: 'var(--muted)', fontSize: '16px' }}>Loading...</div>
   )
 
@@ -103,13 +102,10 @@ export default function WatchlistPage() {
       </div>
 
       {items.length === 0 ? (
-        <div style={{
-          textAlign: 'center', padding: '80px 40px',
-          background: 'var(--white)', borderRadius: '16px', border: '1.5px solid var(--border)',
-        }}>
+        <div style={{ textAlign: 'center', padding: '80px 40px', background: 'var(--white)', borderRadius: '16px', border: '1.5px solid var(--border)' }}>
           <div style={{ fontSize: '56px', marginBottom: '16px' }}>👁</div>
           <h2 style={{ fontFamily: 'var(--display)', fontSize: '24px', fontWeight: 900, marginBottom: '8px' }}>Nothing on your watchlist yet</h2>
-          <p style={{ color: 'var(--muted)', fontSize: '15px', marginBottom: '24px' }}>Add sets you want to buy and set a target price so you know when to strike.</p>
+          <p style={{ color: 'var(--muted)', fontSize: '15px', marginBottom: '24px' }}>Add sets you want to buy and set a target price.</p>
           <button onClick={() => setShowAdd(true)} style={{
             background: 'var(--accent)', color: 'white', border: 'none',
             padding: '12px 24px', borderRadius: '10px', fontSize: '14px', fontWeight: 700, cursor: 'pointer',
@@ -134,24 +130,16 @@ export default function WatchlistPage() {
                 <div>
                   <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '3px' }}>{set?.name}</div>
                   <div style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: 600 }}>{set?.category} · {set?.theme}</div>
-                  {set?.is_retired && (
-                    <span style={{ fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: 'var(--red-light)', color: 'var(--red)', marginTop: '4px', display: 'inline-block' }}>Retired</span>
-                  )}
+                  {set?.is_retired && <span style={{ fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: 'var(--red-light)', color: 'var(--red)', marginTop: '4px', display: 'inline-block' }}>Retired</span>}
                 </div>
                 <div>
                   <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>Current Price</div>
                   <div style={{ fontFamily: 'var(--mono)', fontSize: '18px', fontWeight: 500 }}>{fmt(set?.avg_sale_price)}</div>
-                  {change !== null && (
-                    <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 700, color: change >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                      {change >= 0 ? '+' : ''}{change}% vs retail
-                    </div>
-                  )}
+                  {change !== null && <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 700, color: change >= 0 ? 'var(--green)' : 'var(--red)' }}>{change >= 0 ? '+' : ''}{change}% vs retail</div>}
                 </div>
                 <div>
                   <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>Target Price</div>
-                  <div style={{ fontFamily: 'var(--mono)', fontSize: '18px', fontWeight: 500, color: atTarget ? 'var(--green)' : 'var(--text)' }}>
-                    {item.target_price ? fmt(item.target_price) : 'Not set'}
-                  </div>
+                  <div style={{ fontFamily: 'var(--mono)', fontSize: '18px', fontWeight: 500, color: atTarget ? 'var(--green)' : 'var(--text)' }}>{item.target_price ? fmt(item.target_price) : 'Not set'}</div>
                   {atTarget && <div style={{ fontSize: '11px', color: 'var(--green)', fontWeight: 700, marginTop: '2px' }}>✓ Target reached!</div>}
                 </div>
                 <div>
@@ -159,14 +147,8 @@ export default function WatchlistPage() {
                   <div style={{ fontFamily: 'var(--mono)', fontSize: '15px' }}>{fmt(set?.retail_price)}</div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                  <a href={`/sets/${set?.id}`} style={{
-                    padding: '7px 12px', borderRadius: '8px', border: '1.5px solid var(--border)',
-                    fontSize: '12px', fontWeight: 700, textDecoration: 'none', color: 'var(--text)',
-                  }}>View</a>
-                  <button onClick={() => removeItem(item.id)} style={{
-                    padding: '7px 12px', borderRadius: '8px', border: '1.5px solid var(--border)',
-                    fontSize: '12px', fontWeight: 700, cursor: 'pointer', background: 'none', color: 'var(--muted)',
-                  }}>✕</button>
+                  <a href={`/sets/${set?.id}`} style={{ padding: '7px 12px', borderRadius: '8px', border: '1.5px solid var(--border)', fontSize: '12px', fontWeight: 700, textDecoration: 'none', color: 'var(--text)' }}>View</a>
+                  <button onClick={() => removeItem(item.id)} style={{ padding: '7px 12px', borderRadius: '8px', border: '1.5px solid var(--border)', fontSize: '12px', fontWeight: 700, cursor: 'pointer', background: 'none', color: 'var(--muted)' }}>✕</button>
                 </div>
               </div>
             )
@@ -174,33 +156,17 @@ export default function WatchlistPage() {
         </div>
       )}
 
-      {/* Add modal */}
       {showAdd && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200,
-        }} onClick={e => e.target === e.currentTarget && setShowAdd(false)}>
-          <div style={{
-            background: 'var(--white)', borderRadius: '20px', padding: '32px',
-            width: '440px', boxShadow: '0 24px 64px rgba(0,0,0,0.2)',
-          }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}
+          onClick={e => e.target === e.currentTarget && setShowAdd(false)}>
+          <div style={{ background: 'var(--white)', borderRadius: '20px', padding: '32px', width: '440px', boxShadow: '0 24px 64px rgba(0,0,0,0.2)' }}>
             <h2 style={{ fontFamily: 'var(--display)', fontSize: '24px', fontWeight: 900, marginBottom: '24px' }}>Watch a Set</h2>
-
             <div style={{ marginBottom: '16px', position: 'relative' }}>
               <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '6px' }}>Search Set</label>
-              <input
-                type="text" placeholder="Type a set name..."
-                value={selectedSet ? selectedSet.name : search}
-                onChange={e => { setSearch(e.target.value); setSelectedSet(null) }}
-                style={inputStyle}
-              />
+              <input type="text" placeholder="Type a set name..." value={selectedSet ? selectedSet.name : search}
+                onChange={e => { setSearch(e.target.value); setSelectedSet(null) }} style={inputStyle} />
               {searchResults.length > 0 && !selectedSet && (
-                <div style={{
-                  position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10,
-                  background: 'var(--white)', border: '1.5px solid var(--border)',
-                  borderRadius: '10px', marginTop: '4px', overflow: 'hidden',
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
-                }}>
+                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10, background: 'var(--white)', border: '1.5px solid var(--border)', borderRadius: '10px', marginTop: '4px', overflow: 'hidden', boxShadow: '0 8px 24px rgba(0,0,0,0.1)' }}>
                   {searchResults.map(s => (
                     <div key={s.id} onClick={() => { setSelectedSet(s); setSearch(s.name); setSearchResults([]) }}
                       style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid var(--border)', fontSize: '13px', fontWeight: 600 }}
@@ -214,30 +180,14 @@ export default function WatchlistPage() {
                 </div>
               )}
             </div>
-
             <div style={{ marginBottom: '24px' }}>
               <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '6px' }}>Target Price (optional)</label>
-              <input
-                type="number" step="0.01" placeholder="Alert me when price drops to..."
-                value={targetPrice} onChange={e => setTargetPrice(e.target.value)}
-                style={inputStyle}
-              />
-              <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px' }}>
-                {selectedSet?.avg_sale_price ? `Current avg: ${fmt(selectedSet.avg_sale_price)}` : 'Select a set to see current price'}
-              </div>
+              <input type="number" step="0.01" placeholder="Alert me when price drops to..." value={targetPrice} onChange={e => setTargetPrice(e.target.value)} style={inputStyle} />
+              <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px' }}>{selectedSet?.avg_sale_price ? `Current avg: ${fmt(selectedSet.avg_sale_price)}` : 'Select a set to see current price'}</div>
             </div>
-
             <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={() => { setShowAdd(false); setSelectedSet(null); setSearch('') }} style={{
-                flex: 1, padding: '12px', borderRadius: '10px', border: '1.5px solid var(--border)',
-                background: 'transparent', fontSize: '14px', fontWeight: 700, cursor: 'pointer',
-              }}>Cancel</button>
-              <button onClick={addItem} disabled={!selectedSet || saving} style={{
-                flex: 2, padding: '12px', borderRadius: '10px', border: 'none',
-                background: selectedSet && !saving ? 'var(--accent)' : 'var(--border)',
-                color: selectedSet && !saving ? 'white' : 'var(--muted)',
-                fontSize: '14px', fontWeight: 700, cursor: selectedSet ? 'pointer' : 'default',
-              }}>{saving ? 'Saving...' : 'Add to Watchlist'}</button>
+              <button onClick={() => { setShowAdd(false); setSelectedSet(null); setSearch('') }} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1.5px solid var(--border)', background: 'transparent', fontSize: '14px', fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
+              <button onClick={addItem} disabled={!selectedSet || saving} style={{ flex: 2, padding: '12px', borderRadius: '10px', border: 'none', background: selectedSet && !saving ? 'var(--accent)' : 'var(--border)', color: selectedSet && !saving ? 'white' : 'var(--muted)', fontSize: '14px', fontWeight: 700, cursor: selectedSet ? 'pointer' : 'default' }}>{saving ? 'Saving...' : 'Add to Watchlist'}</button>
             </div>
           </div>
         </div>
