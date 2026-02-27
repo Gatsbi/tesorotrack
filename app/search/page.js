@@ -26,7 +26,7 @@ export default function SearchPage() {
 
     const { data } = await supabase
       .from('sets')
-      .select('id, name, set_number, category, theme, retail_price, avg_sale_price, total_sales, is_retired')
+      .select('id, name, set_number, category, theme, retail_price, avg_sale_price, total_sales, is_retired, image_url')
       .or(`name.ilike.%${q}%,theme.ilike.%${q}%,set_number.ilike.%${q}%,category.ilike.%${q}%`)
       .order('total_sales', { ascending: false, nullsFirst: false })
       .limit(60)
@@ -48,6 +48,74 @@ export default function SearchPage() {
     return Math.round(((avg - retail) / retail) * 100)
   }
   const catIcon = { 'Mega Construx': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }
+
+  const SetCard = ({ set }) => {
+    const change = pct(set.retail_price, set.avg_sale_price)
+    return (
+      <a href={`/sets/${set.id}`} style={{
+        border: '1.5px solid var(--border)', borderRadius: '14px',
+        overflow: 'hidden', textDecoration: 'none', color: 'inherit',
+        background: 'var(--white)', display: 'block', transition: 'all 0.2s',
+      }}
+        onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.08)'; e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'var(--accent)' }}
+        onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)' }}
+      >
+        <div style={{
+          height: '140px', background: 'var(--surface)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          borderBottom: '1px solid var(--border)', position: 'relative',
+          overflow: 'hidden',
+        }}>
+          {set.image_url ? (
+            <img
+              src={set.image_url}
+              alt={set.name}
+              style={{ width: '100%', height: '100%', objectFit: 'contain', padding: '8px' }}
+              onError={(e) => {
+                e.target.style.display = 'none'
+                e.target.nextSibling.style.display = 'flex'
+              }}
+            />
+          ) : null}
+          <div style={{
+            fontSize: '42px',
+            display: set.image_url ? 'none' : 'flex',
+            alignItems: 'center', justifyContent: 'center',
+            width: '100%', height: '100%',
+          }}>
+            {catIcon[set.category] || '📦'}
+          </div>
+          {set.is_retired && (
+            <span style={{
+              position: 'absolute', top: '6px', left: '6px',
+              fontSize: '9px', fontWeight: 700, padding: '2px 6px',
+              borderRadius: '4px', background: 'var(--red-light)', color: 'var(--red)',
+            }}>Retired</span>
+          )}
+        </div>
+        <div style={{ padding: '12px' }}>
+          <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600, marginBottom: '3px' }}>{set.category} · {set.theme}</div>
+          <div style={{ fontSize: '13px', fontWeight: 800, lineHeight: 1.3, marginBottom: '10px' }}>{set.name}</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: '15px', fontWeight: 500 }}>{fmt(set.avg_sale_price)}</div>
+              {set.retail_price && <div style={{ fontSize: '10px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>MSRP {fmt(set.retail_price)}</div>}
+            </div>
+            {change !== null && (
+              <span style={{
+                fontSize: '11px', fontWeight: 700, padding: '3px 7px', borderRadius: '5px',
+                background: change >= 0 ? 'var(--green-light)' : 'var(--red-light)',
+                color: change >= 0 ? 'var(--green)' : 'var(--red)',
+              }}>{change >= 0 ? '+' : ''}{change}%</span>
+            )}
+          </div>
+          {set.total_sales && (
+            <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '6px' }}>{set.total_sales} recent sales</div>
+          )}
+        </div>
+      </a>
+    )
+  }
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '48px 40px' }}>
@@ -92,51 +160,7 @@ export default function SearchPage() {
         <>
           <p style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '24px' }}>{results.length} result{results.length !== 1 ? 's' : ''} found</p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '16px' }}>
-            {results.map(set => {
-              const change = pct(set.retail_price, set.avg_sale_price)
-              return (
-                <a key={set.id} href={`/sets/${set.id}`} style={{
-                  border: '1.5px solid var(--border)', borderRadius: '14px',
-                  overflow: 'hidden', textDecoration: 'none', color: 'inherit',
-                  background: 'var(--white)', display: 'block', transition: 'all 0.2s',
-                }}
-                  onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.08)'; e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'var(--accent)' }}
-                  onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)' }}
-                >
-                  <div style={{
-                    height: '100px', background: 'var(--surface)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: '42px', borderBottom: '1px solid var(--border)', position: 'relative',
-                  }}>
-                    {catIcon[set.category] || '📦'}
-                    {set.is_retired && (
-                      <span style={{
-                        position: 'absolute', top: '6px', left: '6px',
-                        fontSize: '9px', fontWeight: 700, padding: '2px 6px',
-                        borderRadius: '4px', background: 'var(--red-light)', color: 'var(--red)',
-                      }}>Retired</span>
-                    )}
-                  </div>
-                  <div style={{ padding: '12px' }}>
-                    <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600, marginBottom: '3px' }}>{set.category} · {set.theme}</div>
-                    <div style={{ fontSize: '13px', fontWeight: 800, lineHeight: 1.3, marginBottom: '10px' }}>{set.name}</div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontFamily: 'var(--mono)', fontSize: '15px', fontWeight: 500 }}>{fmt(set.avg_sale_price)}</div>
-                        {set.retail_price && <div style={{ fontSize: '10px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>MSRP {fmt(set.retail_price)}</div>}
-                      </div>
-                      {change !== null && (
-                        <span style={{
-                          fontSize: '11px', fontWeight: 700, padding: '3px 7px', borderRadius: '5px',
-                          background: change >= 0 ? 'var(--green-light)' : 'var(--red-light)',
-                          color: change >= 0 ? 'var(--green)' : 'var(--red)',
-                        }}>{change >= 0 ? '+' : ''}{change}%</span>
-                      )}
-                    </div>
-                  </div>
-                </a>
-              )
-            })}
+            {results.map(set => <SetCard key={set.id} set={set} />)}
           </div>
         </>
       )}

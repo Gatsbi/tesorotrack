@@ -13,7 +13,6 @@ export default function BrowsePage() {
   const [themes, setThemes] = useState([])
 
   useEffect(() => {
-    // Read category from URL
     const params = new URLSearchParams(window.location.search)
     const cat = params.get('cat')
     if (cat) setCategory(cat)
@@ -23,7 +22,7 @@ export default function BrowsePage() {
   async function loadSets(cat) {
     let query = supabase
       .from('sets')
-      .select('id, name, set_number, category, theme, retail_price, avg_sale_price, total_sales, is_retired, piece_count')
+      .select('id, name, set_number, category, theme, retail_price, avg_sale_price, total_sales, is_retired, piece_count, image_url')
       .order('total_sales', { ascending: false, nullsFirst: false })
 
     if (cat && cat !== 'All') query = query.eq('category', cat)
@@ -32,7 +31,6 @@ export default function BrowsePage() {
     setSets(data || [])
     setFiltered(data || [])
 
-    // Extract unique themes
     const uniqueThemes = [...new Set((data || []).map(s => s.theme))].filter(Boolean).sort()
     setThemes(uniqueThemes)
     setLoading(false)
@@ -134,12 +132,35 @@ export default function BrowsePage() {
                 onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.08)'; e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'var(--accent)' }}
                 onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)' }}
               >
+                {/* Image area */}
                 <div style={{
-                  height: '100px', background: 'var(--surface)',
+                  height: '140px', background: 'var(--surface)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: '42px', borderBottom: '1px solid var(--border)', position: 'relative',
+                  borderBottom: '1px solid var(--border)', position: 'relative',
+                  overflow: 'hidden',
                 }}>
-                  {catIcon[set.category] || '📦'}
+                  {set.image_url ? (
+                    <img
+                      src={set.image_url}
+                      alt={set.name}
+                      style={{
+                        width: '100%', height: '100%',
+                        objectFit: 'contain', padding: '8px',
+                      }}
+                      onError={(e) => {
+                        e.target.style.display = 'none'
+                        e.target.nextSibling.style.display = 'flex'
+                      }}
+                    />
+                  ) : null}
+                  <div style={{
+                    fontSize: '42px',
+                    display: set.image_url ? 'none' : 'flex',
+                    alignItems: 'center', justifyContent: 'center',
+                    width: '100%', height: '100%',
+                  }}>
+                    {catIcon[set.category] || '📦'}
+                  </div>
                   {set.is_retired && (
                     <span style={{
                       position: 'absolute', top: '6px', left: '6px',
@@ -148,6 +169,8 @@ export default function BrowsePage() {
                     }}>Retired</span>
                   )}
                 </div>
+
+                {/* Info */}
                 <div style={{ padding: '12px' }}>
                   <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600, marginBottom: '3px' }}>{set.category} · {set.theme}</div>
                   <div style={{ fontSize: '13px', fontWeight: 800, lineHeight: 1.3, marginBottom: '10px' }}>{set.name}</div>
