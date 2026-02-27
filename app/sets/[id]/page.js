@@ -132,9 +132,29 @@ export default function SetDetailPage({ params }) {
             display: 'flex', flexDirection: 'column', alignItems: 'center',
             justifyContent: 'center', marginBottom: '16px', gap: '12px',
           }}>
-            <div style={{ fontSize: '80px' }}>
-              {{ 'Mega Construx': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }[set.category] || '📦'}
-            </div>
+            {set.image_url ? (
+  <img
+    src={set.image_url}
+    alt={set.name}
+    style={{
+      width: '100%',
+      maxWidth: '220px',
+      height: '180px',
+      objectFit: 'contain',
+      borderRadius: '8px',
+    }}
+    onError={(e) => {
+      e.target.style.display = 'none';
+      e.target.nextSibling.style.display = 'block';
+    }}
+  />
+) : null}
+<div style={{
+  fontSize: '80px',
+  display: set.image_url ? 'none' : 'block'
+}}>
+  {{ 'Mega Construx': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }[set.category] || '📦'}
+</div>
             {set.is_retired && (
               <span style={{
                 fontSize: '12px', fontWeight: 700, padding: '4px 12px',
