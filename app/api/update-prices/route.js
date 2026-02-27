@@ -39,23 +39,42 @@ const SEARCH_GROUPS = [
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function getEbayToken() {
-  // Use pre-encoded credentials env var to avoid any runtime encoding issues
-  // Falls back to encoding from individual vars if not set
+  // Use URLSearchParams for body — identical to how curl -d encodes it
+  const body = new URLSearchParams();
+  body.append('grant_type', 'client_credentials');
+  body.append('scope', 'https://api.ebay.com/oauth/api_scope');
+
+  // Use pre-encoded b64 env var if set, otherwise encode at runtime
   const b64 = process.env.EBAY_CREDENTIALS_B64 ||
     Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64');
 
-  const res = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Basic ${b64}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: 'grant_type=client_credentials&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope',
-    signal: AbortSignal.timeout(10000),
-  });
-  const data = await res.json();
+  let res, text;
+  try {
+    res = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${b64}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+      },
+      body: body.toString(),
+      signal: AbortSignal.timeout(10000),
+    });
+    text = await res.text();
+  } catch (e) {
+    return { error: `Fetch failed: ${e.message}` };
+  }
+
+  let data;
+  try { data = JSON.parse(text); }
+  catch (e) { return { error: `Non-JSON from eBay: ${text.substring(0, 300)}` }; }
+
   if (!res.ok || !data.access_token) {
-    return { error: data.error_description || data.error || JSON.stringify(data), status: res.status, fullResponse: data };
+    return {
+      error: data.error_description || data.error || 'Unknown error',
+      status: res.status,
+      fullResponse: data,
+    };
   }
   return { token: data.access_token, expiresIn: data.expires_in };
 }
@@ -68,21 +87,26 @@ async function searchEbaySold(query, token) {
     sort: 'newlyListed',
   });
 
-  const res = await fetch(
-    `https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`,
-    {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
-        'Content-Type': 'application/json',
-      },
-      signal: AbortSignal.timeout(10000),
-    }
-  );
+  let res;
+  try {
+    res = await fetch(
+      `https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
+          'Accept': 'application/json',
+        },
+        signal: AbortSignal.timeout(10000),
+      }
+    );
+  } catch (e) {
+    return { error: `Search fetch failed: ${e.message}` };
+  }
 
   if (!res.ok) {
     const errText = await res.text();
-    return { error: `${res.status}: ${errText.substring(0, 300)}` };
+    return { error: `Browse API ${res.status}: ${errText.substring(0, 300)}` };
   }
 
   const data = await res.json();
@@ -125,7 +149,7 @@ function parseBrowseItem(item, setId) {
     sale_date: new Date().toISOString().split('T')[0],
     condition,
     listing_title: (item?.title || '').substring(0, 255),
-    ebay_item_id: item?.itemId?.replace(/\|/g, '_') || null,
+    ebay_item_id: (item?.itemId || '').replace(/\|/g, '_'),
     source: 'ebay',
   };
 }
@@ -160,25 +184,34 @@ async function updateAverages(supabase, setIds) {
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
-  const debug = searchParams.get('debug') === 'true';
 
-  // ALWAYS show env var status when ?token=true — runs before any other checks
+  // Token debug — runs first, before any validation
   if (searchParams.get('token') === 'true') {
-    // Also attempt token generation to see exact error
+    const b64 = process.env.EBAY_CREDENTIALS_B64 ||
+      (EBAY_CLIENT_ID && EBAY_CLIENT_SECRET
+        ? Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64')
+        : null);
+
+    const body = new URLSearchParams();
+    body.append('grant_type', 'client_credentials');
+    body.append('scope', 'https://api.ebay.com/oauth/api_scope');
+
     let tokenAttempt = null;
-    if (EBAY_CLIENT_ID && EBAY_CLIENT_SECRET) {
-      const credentials = Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64');
+    if (b64) {
       try {
         const res = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
           method: 'POST',
           headers: {
-            'Authorization': `Basic ${credentials}`,
+            'Authorization': `Basic ${b64}`,
             'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
           },
-          body: 'grant_type=client_credentials&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope',
+          body: body.toString(),
         });
-        const data = await res.json();
-        tokenAttempt = { status: res.status, response: data };
+        const text = await res.text();
+        let data;
+        try { data = JSON.parse(text); } catch(e) { data = { raw: text.substring(0, 200) }; }
+        tokenAttempt = { status: res.status, response: data, tokenReceived: !!data.access_token };
       } catch (e) {
         tokenAttempt = { error: e.message };
       }
@@ -188,22 +221,21 @@ export async function GET(request) {
       envVars: {
         EBAY_APP_ID_set: !!EBAY_CLIENT_ID,
         EBAY_APP_ID_length: EBAY_CLIENT_ID?.length || 0,
-        EBAY_APP_ID_preview: EBAY_CLIENT_ID ? `${EBAY_CLIENT_ID.substring(0, 20)}...` : 'NOT SET',
         EBAY_CLIENT_SECRET_set: !!EBAY_CLIENT_SECRET,
         EBAY_CLIENT_SECRET_length: EBAY_CLIENT_SECRET?.length || 0,
-        EBAY_CLIENT_SECRET_preview: EBAY_CLIENT_SECRET ? `${EBAY_CLIENT_SECRET.substring(0, 15)}...` : 'NOT SET',
+        EBAY_CREDENTIALS_B64_set: !!process.env.EBAY_CREDENTIALS_B64,
+        EBAY_CREDENTIALS_B64_length: process.env.EBAY_CREDENTIALS_B64?.length || 0,
         SUPABASE_SERVICE_KEY_set: !!SUPABASE_SERVICE_KEY,
-        SUPABASE_URL_set: !!SUPABASE_URL,
+        b64_used: b64 ? `${b64.substring(0, 20)}...` : null,
+        b64_length: b64?.length || 0,
       },
       tokenAttempt,
     });
   }
 
-  if (!EBAY_CLIENT_ID) return Response.json({ error: 'EBAY_APP_ID not set' }, { status: 500 });
-  if (!EBAY_CLIENT_SECRET) return Response.json({ error: 'EBAY_CLIENT_SECRET not set' }, { status: 500 });
+  if (!EBAY_CLIENT_ID && !process.env.EBAY_CREDENTIALS_B64) return Response.json({ error: 'EBAY_APP_ID not set' }, { status: 500 });
   if (!SUPABASE_SERVICE_KEY) return Response.json({ error: 'SUPABASE_SERVICE_KEY not set' }, { status: 500 });
 
-  // Get token
   const tokenResult = await getEbayToken();
   if (tokenResult.error) {
     return Response.json({
@@ -216,7 +248,7 @@ export async function GET(request) {
 
   const token = tokenResult.token;
 
-  if (debug) {
+  if (searchParams.get('debug') === 'true') {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
     const { data: sets } = await supabase.from('sets').select('id, name, category, theme, set_number');
     const testGroup = SEARCH_GROUPS[0];
