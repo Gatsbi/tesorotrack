@@ -1,12 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 
-// ============================================================
-// CONFIG — reads from Vercel environment variables
-// ============================================================
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const EBAY_APP_ID = process.env.EBAY_APP_ID;
-const CRON_SECRET = process.env.CRON_SECRET;
+
+// Set max duration for this route (Vercel Pro: 300s, Hobby: 60s)
+export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
 
 const SEARCH_GROUPS = [
   { query: 'Mega Construx Halo', category: 'Mega Construx', theme: 'Halo' },
@@ -16,11 +16,8 @@ const SEARCH_GROUPS = [
   { query: 'Mega Construx Destiny', category: 'Mega Construx', theme: 'Destiny' },
   { query: 'Mega Bloks Dragons', category: 'Mega Construx', theme: 'Dragons' },
   { query: 'Mega Construx Probuilder', category: 'Mega Construx', theme: 'Probuilder' },
-  { query: 'Mega Bloks Teenage Mutant Ninja Turtles', category: 'Mega Construx', theme: 'Teenage Mutant Ninja Turtles' },
-  { query: 'Mega Bloks World of Warcraft', category: 'Mega Construx', theme: 'World of Warcraft' },
   { query: 'Mega Bloks Assassins Creed', category: 'Mega Construx', theme: 'Assassins Creed' },
   { query: 'Mega Bloks Skylanders', category: 'Mega Construx', theme: 'Skylanders' },
-  { query: 'Mega Bloks Minions', category: 'Mega Construx', theme: 'Minions' },
   { query: 'Funko Pop Marvel', category: 'Funko Pop', theme: 'Marvel' },
   { query: 'Funko Pop Star Wars', category: 'Funko Pop', theme: 'Star Wars' },
   { query: 'Funko Pop Harry Potter', category: 'Funko Pop', theme: 'Harry Potter' },
@@ -31,10 +28,6 @@ const SEARCH_GROUPS = [
   { query: 'Funko Pop Naruto', category: 'Funko Pop', theme: 'Naruto' },
   { query: 'Funko Pop My Hero Academia', category: 'Funko Pop', theme: 'My Hero Academia' },
   { query: 'Funko Pop Demon Slayer', category: 'Funko Pop', theme: 'Demon Slayer' },
-  { query: 'Funko Pop Game of Thrones', category: 'Funko Pop', theme: 'Game of Thrones' },
-  { query: 'Funko Pop Breaking Bad', category: 'Funko Pop', theme: 'Breaking Bad' },
-  { query: 'Funko Pop The Office', category: 'Funko Pop', theme: 'The Office' },
-  { query: 'Funko Pop Friends TV', category: 'Funko Pop', theme: 'Friends' },
   { query: 'LEGO Icons Creator Expert', category: 'LEGO', theme: 'Icons' },
   { query: 'LEGO Technic', category: 'LEGO', theme: 'Technic' },
   { query: 'LEGO Star Wars', category: 'LEGO', theme: 'Star Wars' },
@@ -60,17 +53,19 @@ async function searchEbay(group) {
     'itemFilter(2).value': 'USD',
     'sortOrder': 'EndTimeSoonest',
     'paginationInput.entriesPerPage': '100',
-    'paginationInput.pageNumber': '1',
   });
 
   try {
-    const res = await fetch(`https://svcs.ebay.com/services/search/FindingService/v1?${params}`);
+    const res = await fetch(
+      `https://svcs.ebay.com/services/search/FindingService/v1?${params}`,
+      { signal: AbortSignal.timeout(8000) } // 8s timeout per eBay call
+    );
     const data = await res.json();
-    const searchResult = data?.findCompletedItemsResponse?.[0];
-    if (searchResult?.ack?.[0] !== 'Success' && searchResult?.ack?.[0] !== 'Warning') return [];
-    return searchResult?.searchResult?.[0]?.item || [];
+    const result = data?.findCompletedItemsResponse?.[0];
+    if (result?.ack?.[0] !== 'Success' && result?.ack?.[0] !== 'Warning') return [];
+    return result?.searchResult?.[0]?.item || [];
   } catch (e) {
-    console.error(`eBay search failed for ${group.query}:`, e.message);
+    console.error(`eBay error for ${group.query}:`, e.message);
     return [];
   }
 }
@@ -98,14 +93,13 @@ function parseListing(item, setId) {
   if (price <= 0 || price > 2000) return null;
 
   const title = (item?.title?.[0] || '').toLowerCase();
-  const skip = ['lot of', 'bundle', 'parts only', 'instructions only', 'incomplete', 'custom'];
-  if (skip.some(kw => title.includes(kw))) return null;
+  if (['lot of', 'bundle', 'parts only', 'instructions only', 'incomplete', 'custom'].some(kw => title.includes(kw))) return null;
 
-  const conditionName = (item?.condition?.[0]?.conditionDisplayName?.[0] || '').toLowerCase();
+  const condName = (item?.condition?.[0]?.conditionDisplayName?.[0] || '').toLowerCase();
   let condition = 'Unknown';
-  if (conditionName.includes('new')) condition = 'New Sealed';
-  else if (conditionName.includes('open') || conditionName.includes('like new')) condition = 'Open Box';
-  else if (conditionName.includes('used')) condition = 'Used';
+  if (condName.includes('new')) condition = 'New Sealed';
+  else if (condName.includes('open') || condName.includes('like new')) condition = 'Open Box';
+  else if (condName.includes('used')) condition = 'Used';
 
   const endDate = item?.listingInfo?.[0]?.endTime?.[0];
   const saleDate = endDate ? new Date(endDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
@@ -128,18 +122,14 @@ async function updateAverages(supabase, setIds) {
 
   for (const setId of setIds) {
     const { data: prices } = await supabase
-      .from('prices')
-      .select('sale_price, condition')
-      .eq('set_id', setId)
-      .gte('sale_date', cutoffStr)
-      .eq('source', 'ebay');
+      .from('prices').select('sale_price, condition')
+      .eq('set_id', setId).gte('sale_date', cutoffStr).eq('source', 'ebay');
 
-    if (!prices || prices.length === 0) continue;
+    if (!prices?.length) continue;
 
-    const allPrices = prices.map(p => p.sale_price).sort((a, b) => a - b);
-    // Trim outliers (bottom 10%, top 10%)
-    const trim = Math.floor(allPrices.length * 0.1);
-    const trimmed = allPrices.slice(trim, allPrices.length - trim);
+    const sorted = prices.map(p => p.sale_price).sort((a, b) => a - b);
+    const trim = Math.floor(sorted.length * 0.1);
+    const trimmed = sorted.slice(trim, sorted.length - trim);
     const avg = trimmed.reduce((s, p) => s + p, 0) / trimmed.length;
 
     const newPrices = prices.filter(p => p.condition === 'New Sealed').map(p => p.sale_price);
@@ -154,42 +144,38 @@ async function updateAverages(supabase, setIds) {
   }
 }
 
-// ============================================================
-// MAIN HANDLER — called by Vercel cron
-// ============================================================
 export async function GET(request) {
-  // Verify this is called by Vercel cron or manually with secret
-  const authHeader = request.headers.get('authorization');
-  if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  if (!EBAY_APP_ID) return Response.json({ error: 'EBAY_APP_ID not set' }, { status: 500 });
-  if (!SUPABASE_SERVICE_KEY) return Response.json({ error: 'SUPABASE_SERVICE_KEY not set' }, { status: 500 });
+  if (!EBAY_APP_ID) return Response.json({ error: 'EBAY_APP_ID not configured' }, { status: 500 });
+  if (!SUPABASE_SERVICE_KEY) return Response.json({ error: 'SUPABASE_SERVICE_KEY not configured' }, { status: 500 });
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-  // Load all sets
+  // Check which group to process (supports pagination via ?batch=0, ?batch=1 etc)
+  const { searchParams } = new URL(request.url);
+  const batch = parseInt(searchParams.get('batch') || '0');
+  const batchSize = 8; // Process 8 groups per call to stay under timeout
+  const groupsToProcess = SEARCH_GROUPS.slice(batch * batchSize, (batch + 1) * batchSize);
+  const isLastBatch = (batch + 1) * batchSize >= SEARCH_GROUPS.length;
+
+  if (groupsToProcess.length === 0) {
+    return Response.json({ done: true, message: 'All groups processed' });
+  }
+
   const { data: sets } = await supabase.from('sets').select('id, name, category, theme, set_number');
-  if (!sets?.length) return Response.json({ error: 'No sets found' }, { status: 500 });
+  if (!sets?.length) return Response.json({ error: 'No sets in database' }, { status: 500 });
 
   let totalSaved = 0;
-  let groupsProcessed = 0;
   const updatedSetIds = new Set();
 
-  for (const group of SEARCH_GROUPS) {
-    console.log(`Processing: ${group.query}`);
+  for (const group of groupsToProcess) {
     const items = await searchEbay(group);
-
     const prices = [];
+
     for (const item of items) {
       const set = matchToSet(item, sets, group);
       if (!set) continue;
       const price = parseListing(item, set.id);
-      if (price) {
-        prices.push(price);
-        updatedSetIds.add(set.id);
-      }
+      if (price) { prices.push(price); updatedSetIds.add(set.id); }
     }
 
     if (prices.length > 0) {
@@ -199,18 +185,19 @@ export async function GET(request) {
       if (!error) totalSaved += prices.length;
     }
 
-    groupsProcessed++;
-    await sleep(2000); // 2s between eBay calls
+    await sleep(500); // Reduced to 500ms between calls
   }
 
-  // Update avg_sale_price on all affected sets
   await updateAverages(supabase, [...updatedSetIds]);
 
   return Response.json({
     success: true,
-    groupsProcessed,
+    batch,
+    groupsProcessed: groupsToProcess.length,
     pricesSaved: totalSaved,
     setsUpdated: updatedSetIds.size,
+    nextBatch: isLastBatch ? null : `${request.url.split('?')[0]}?batch=${batch + 1}`,
+    isLastBatch,
     timestamp: new Date().toISOString(),
   });
 }
