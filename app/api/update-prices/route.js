@@ -2,8 +2,8 @@ import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const EBAY_CLIENT_ID = process.env.EBAY_APP_ID; // Same App ID you already have
-const EBAY_CLIENT_SECRET = process.env.EBAY_CLIENT_SECRET; // Cert ID (Client Secret)
+const EBAY_CLIENT_ID = process.env.EBAY_APP_ID;
+const EBAY_CLIENT_SECRET = process.env.EBAY_CLIENT_SECRET;
 
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
@@ -38,123 +38,86 @@ const SEARCH_GROUPS = [
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// ============================================================
-// STEP 1: Get OAuth token using Client Credentials flow
-// No user login needed — server-to-server auth
-// ============================================================
 async function getEbayToken() {
-  const credentials = Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64');
-  
-  try {
-    const res = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${credentials}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: 'grant_type=client_credentials&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope',
-      signal: AbortSignal.timeout(10000),
-    });
+  // Use pre-encoded credentials env var to avoid any runtime encoding issues
+  // Falls back to encoding from individual vars if not set
+  const b64 = process.env.EBAY_CREDENTIALS_B64 ||
+    Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64');
 
-    const data = await res.json();
-    
-    if (!res.ok || !data.access_token) {
-      return { error: `Token error: ${data.error_description || data.error || JSON.stringify(data)}` };
-    }
-    
-    return { token: data.access_token, expiresIn: data.expires_in };
-  } catch (e) {
-    return { error: `Token fetch failed: ${e.message}` };
+  const res = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Basic ${b64}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: 'grant_type=client_credentials&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope',
+    signal: AbortSignal.timeout(10000),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.access_token) {
+    return { error: data.error_description || data.error || JSON.stringify(data), status: res.status, fullResponse: data };
   }
+  return { token: data.access_token, expiresIn: data.expires_in };
 }
 
-// ============================================================
-// STEP 2: Search eBay sold items using Browse API
-// Uses the buy/browse endpoint with filter for sold items
-// ============================================================
 async function searchEbaySold(query, token) {
   const params = new URLSearchParams({
     q: query,
-    filter: 'buyingOptions:{FIXED_PRICE},conditions:{USED|NEW},priceCurrency:USD',
+    filter: 'buyingOptions:{FIXED_PRICE}',
     limit: '100',
     sort: 'newlyListed',
   });
 
-  try {
-    const res = await fetch(
-      `https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`,
-      {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
-          'Content-Type': 'application/json',
-        },
-        signal: AbortSignal.timeout(10000),
-      }
-    );
-
-    if (!res.ok) {
-      const errText = await res.text();
-      return { error: `Browse API error ${res.status}: ${errText.substring(0, 300)}` };
+  const res = await fetch(
+    `https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`,
+    {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(10000),
     }
+  );
 
-    const data = await res.json();
-    return {
-      success: true,
-      total: data.total || 0,
-      items: data.itemSummaries || [],
-    };
-  } catch (e) {
-    return { error: `Search failed: ${e.message}` };
+  if (!res.ok) {
+    const errText = await res.text();
+    return { error: `${res.status}: ${errText.substring(0, 300)}` };
   }
+
+  const data = await res.json();
+  return { success: true, total: data.total || 0, items: data.itemSummaries || [] };
 }
 
-// ============================================================
-// MATCH item title to a set in our database
-// ============================================================
 function matchToSet(title, sets, group) {
   const t = title.toLowerCase();
   const groupSets = sets.filter(s => s.category === group.category && s.theme === group.theme);
 
-  // Try set number match first
   for (const set of groupSets) {
-    if (set.set_number && set.set_number !== '—' && t.includes(set.set_number.toLowerCase())) {
-      return set;
-    }
+    if (set.set_number && set.set_number !== '—' && t.includes(set.set_number.toLowerCase())) return set;
   }
-
-  // Try name keyword match
   for (const set of groupSets) {
     const words = set.name.toLowerCase()
       .replace(/funko pop!?|mega construx|mega bloks|lego/gi, '').trim()
       .split(' ').filter(w => w.length > 3);
-    const matchCount = words.filter(w => t.includes(w)).length;
-    if (matchCount >= 2) return set;
+    if (words.filter(w => t.includes(w)).length >= 2) return set;
   }
-
   return null;
 }
 
-// ============================================================
-// PARSE Browse API item into a price record
-// Browse API has different field names than Finding API
-// ============================================================
 function parseBrowseItem(item, setId) {
   const price = parseFloat(item?.price?.value || 0);
   if (price <= 0 || price > 2000) return null;
 
   const title = (item?.title || '').toLowerCase();
-  const skip = ['lot of', 'bundle', 'parts only', 'instructions only', 'incomplete', 'custom', 'read desc'];
-  if (skip.some(kw => title.includes(kw))) return null;
+  if (['lot of', 'bundle', 'parts only', 'instructions only', 'incomplete', 'custom'].some(kw => title.includes(kw))) return null;
 
-  // Condition from Browse API
   const conditionId = item?.conditionId || '';
   const conditionText = (item?.condition || '').toLowerCase();
   let condition = 'Unknown';
   if (conditionId === '1000' || conditionText.includes('new')) condition = 'New Sealed';
-  else if (conditionId === '1500' || conditionText.includes('open')) condition = 'Open Box';
+  else if (conditionId === '1500' || conditionText.includes('open') || conditionText.includes('like new')) condition = 'Open Box';
   else if (['2000', '2500', '3000'].includes(conditionId) || conditionText.includes('used')) condition = 'Used';
-  else if (conditionText.includes('like new')) condition = 'Open Box';
 
   return {
     set_id: setId,
@@ -167,9 +130,6 @@ function parseBrowseItem(item, setId) {
   };
 }
 
-// ============================================================
-// UPDATE avg_sale_price on sets table
-// ============================================================
 async function updateAverages(supabase, setIds) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 90);
@@ -186,7 +146,6 @@ async function updateAverages(supabase, setIds) {
     const trim = Math.floor(sorted.length * 0.1);
     const trimmed = sorted.slice(trim, sorted.length - (trim || 1));
     const avg = trimmed.reduce((s, p) => s + p, 0) / trimmed.length;
-
     const newPrices = prices.filter(p => p.condition === 'New Sealed').map(p => p.sale_price);
     const newAvg = newPrices.length ? newPrices.reduce((s, p) => s + p, 0) / newPrices.length : null;
 
@@ -199,34 +158,67 @@ async function updateAverages(supabase, setIds) {
   }
 }
 
-// ============================================================
-// MAIN HANDLER
-// ============================================================
 export async function GET(request) {
+  const { searchParams } = new URL(request.url);
+  const debug = searchParams.get('debug') === 'true';
+
+  // ALWAYS show env var status when ?token=true — runs before any other checks
+  if (searchParams.get('token') === 'true') {
+    // Also attempt token generation to see exact error
+    let tokenAttempt = null;
+    if (EBAY_CLIENT_ID && EBAY_CLIENT_SECRET) {
+      const credentials = Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64');
+      try {
+        const res = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Basic ${credentials}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: 'grant_type=client_credentials&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope',
+        });
+        const data = await res.json();
+        tokenAttempt = { status: res.status, response: data };
+      } catch (e) {
+        tokenAttempt = { error: e.message };
+      }
+    }
+
+    return Response.json({
+      envVars: {
+        EBAY_APP_ID_set: !!EBAY_CLIENT_ID,
+        EBAY_APP_ID_length: EBAY_CLIENT_ID?.length || 0,
+        EBAY_APP_ID_preview: EBAY_CLIENT_ID ? `${EBAY_CLIENT_ID.substring(0, 20)}...` : 'NOT SET',
+        EBAY_CLIENT_SECRET_set: !!EBAY_CLIENT_SECRET,
+        EBAY_CLIENT_SECRET_length: EBAY_CLIENT_SECRET?.length || 0,
+        EBAY_CLIENT_SECRET_preview: EBAY_CLIENT_SECRET ? `${EBAY_CLIENT_SECRET.substring(0, 15)}...` : 'NOT SET',
+        SUPABASE_SERVICE_KEY_set: !!SUPABASE_SERVICE_KEY,
+        SUPABASE_URL_set: !!SUPABASE_URL,
+      },
+      tokenAttempt,
+    });
+  }
+
   if (!EBAY_CLIENT_ID) return Response.json({ error: 'EBAY_APP_ID not set' }, { status: 500 });
   if (!EBAY_CLIENT_SECRET) return Response.json({ error: 'EBAY_CLIENT_SECRET not set' }, { status: 500 });
   if (!SUPABASE_SERVICE_KEY) return Response.json({ error: 'SUPABASE_SERVICE_KEY not set' }, { status: 500 });
 
-  const { searchParams } = new URL(request.url);
-  const debug = searchParams.get('debug') === 'true';
-
-  // Step 1: Get OAuth token
+  // Get token
   const tokenResult = await getEbayToken();
   if (tokenResult.error) {
-    return Response.json({ 
-      error: 'Failed to get eBay token', 
+    return Response.json({
+      error: 'eBay token failed',
       detail: tokenResult.error,
-      hint: 'Check EBAY_APP_ID and EBAY_CLIENT_SECRET env vars',
+      httpStatus: tokenResult.status,
+      fullResponse: tokenResult.fullResponse,
     }, { status: 500 });
   }
 
   const token = tokenResult.token;
 
-  // Debug mode: test one search and return diagnostics
   if (debug) {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
     const { data: sets } = await supabase.from('sets').select('id, name, category, theme, set_number');
-    
     const testGroup = SEARCH_GROUPS[0];
     const searchResult = await searchEbaySold(testGroup.query, token);
 
@@ -234,19 +226,13 @@ export async function GET(request) {
     if (searchResult.items?.length > 0) {
       for (const item of searchResult.items.slice(0, 5)) {
         const matched = matchToSet(item.title, sets, testGroup);
-        matchResults.push({
-          title: item.title,
-          price: item?.price?.value,
-          condition: item?.condition,
-          matched: matched?.name || null,
-        });
+        matchResults.push({ title: item.title, price: item?.price?.value, condition: item?.condition, matched: matched?.name || null });
       }
     }
 
     return Response.json({
       debug: true,
       tokenOk: true,
-      tokenExpiresIn: tokenResult.expiresIn,
       setsInDb: sets?.length || 0,
       testGroup: testGroup.query,
       ebayResult: searchResult.error ? searchResult : {
@@ -258,7 +244,7 @@ export async function GET(request) {
     });
   }
 
-  // Normal batch processing
+  // Normal batch run
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
   const { data: sets } = await supabase.from('sets').select('id, name, category, theme, set_number');
   if (!sets?.length) return Response.json({ error: 'No sets in database' }, { status: 500 });
@@ -268,9 +254,7 @@ export async function GET(request) {
   const groupsToProcess = SEARCH_GROUPS.slice(batch * batchSize, (batch + 1) * batchSize);
   const isLastBatch = (batch + 1) * batchSize >= SEARCH_GROUPS.length;
 
-  if (groupsToProcess.length === 0) {
-    return Response.json({ done: true, message: 'All groups processed' });
-  }
+  if (groupsToProcess.length === 0) return Response.json({ done: true });
 
   let totalSaved = 0;
   const updatedSetIds = new Set();
@@ -278,12 +262,7 @@ export async function GET(request) {
 
   for (const group of groupsToProcess) {
     const searchResult = await searchEbaySold(group.query, token);
-
-    if (searchResult.error) {
-      groupLog.push({ group: group.query, error: searchResult.error });
-      await sleep(500);
-      continue;
-    }
+    if (searchResult.error) { groupLog.push({ group: group.query, error: searchResult.error }); continue; }
 
     const prices = [];
     for (const item of searchResult.items) {
@@ -294,26 +273,18 @@ export async function GET(request) {
     }
 
     if (prices.length > 0) {
-      const { error } = await supabase
-        .from('prices')
-        .upsert(prices, { onConflict: 'ebay_item_id', ignoreDuplicates: true });
+      const { error } = await supabase.from('prices').upsert(prices, { onConflict: 'ebay_item_id', ignoreDuplicates: true });
       if (!error) totalSaved += prices.length;
     }
 
-    groupLog.push({
-      group: group.query,
-      ebayItems: searchResult.items.length,
-      matched: prices.length,
-    });
-
+    groupLog.push({ group: group.query, ebayItems: searchResult.items.length, matched: prices.length });
     await sleep(300);
   }
 
   await updateAverages(supabase, [...updatedSetIds]);
 
   return Response.json({
-    success: true,
-    batch,
+    success: true, batch,
     groupsProcessed: groupsToProcess.length,
     pricesSaved: totalSaved,
     setsUpdated: updatedSetIds.size,
