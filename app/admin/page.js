@@ -12,6 +12,7 @@ export default function AdminPage() {
   const [listings, setListings] = useState([])
   const [users, setUsers] = useState([])
   const [stats, setStats] = useState({})
+  const [reviewNote, setReviewNote] = useState({})
 
   useEffect(() => {
     if (!authLoading) {
@@ -28,200 +29,138 @@ export default function AdminPage() {
   }
 
   async function loadAll() {
-    const [subData, listData, userCount, setCount] = await Promise.all([
-      supabase.from('set_submissions').select('*, profiles!submitted_by(username)').order('created_at', { ascending: false }),
-      supabase.from('marketplace_listings').select('*, sets(name), profiles!seller_id(username)').order('created_at', { ascending: false }).limit(30),
-      supabase.from('profiles').select('id', { count: 'exact', head: true }),
-      supabase.from('sets').select('id', { count: 'exact', head: true }),
+    const [subData, listingData, userData] = await Promise.all([
+      supabase.from('set_submissions').select('*, profiles(username)').order('created_at', { ascending: false }),
+      supabase.from('marketplace_listings').select('*, sets(name), profiles(username)').order('created_at', { ascending: false }).limit(50),
+      supabase.from('profiles').select('*').order('created_at', { ascending: false }).limit(100),
     ])
     setSubmissions(subData.data || [])
-    setListings(listData.data || [])
-    setStats({
-      users: userCount.count || 0,
-      sets: setCount.count || 0,
-      listings: listData.data?.length || 0,
-      pending: (subData.data || []).filter(s => s.status === 'pending').length,
-    })
+    setListings(listingData.data || [])
+    setUsers(userData.data || [])
+
+    const pending = (subData.data || []).filter(s => s.status === 'pending').length
+    const activeListings = (listingData.data || []).filter(l => l.status === 'active').length
+    setStats({ pending, activeListings, totalUsers: (userData.data || []).length })
     setLoading(false)
   }
 
-  const approveSubmission = async (sub) => {
-    // Add to sets table
-    const { error } = await supabase.from('sets').insert({
-      name: sub.name,
-      set_number: sub.set_number,
-      category: sub.category,
-      theme: sub.theme,
-      retail_price: sub.retail_price,
-      year_released: sub.year_released,
-      piece_count: sub.piece_count,
-    })
-    if (error) { alert('Error adding set: ' + error.message); return }
-
-    // Mark submission as approved
-    await supabase.from('set_submissions').update({
-      status: 'approved',
-      reviewed_by: user.id,
-      reviewed_at: new Date().toISOString(),
-    }).eq('id', sub.id)
-
-    setSubmissions(submissions.map(s => s.id === sub.id ? { ...s, status: 'approved' } : s))
-    alert(`✓ "${sub.name}" added to catalog!`)
+  async function reviewSubmission(id, status) {
+    await supabase.from('set_submissions').update({ status, review_notes: reviewNote[id] || null, reviewed_at: new Date().toISOString(), reviewed_by: user.id }).eq('id', id)
+    setSubmissions(submissions.map(s => s.id === id ? { ...s, status } : s))
   }
 
-  const rejectSubmission = async (id) => {
-    await supabase.from('set_submissions').update({
-      status: 'rejected',
-      reviewed_by: user.id,
-      reviewed_at: new Date().toISOString(),
-    }).eq('id', id)
-    setSubmissions(submissions.map(s => s.id === id ? { ...s, status: 'rejected' } : s))
-  }
-
-  const removeListing = async (id) => {
+  async function removeListing(id) {
     await supabase.from('marketplace_listings').update({ status: 'removed' }).eq('id', id)
     setListings(listings.map(l => l.id === id ? { ...l, status: 'removed' } : l))
   }
 
-  const fmt = (n) => n ? `$${parseFloat(n).toFixed(2)}` : '—'
-
-  const tabStyle = (active) => ({
-    padding: '10px 20px', borderRadius: '8px', border: 'none',
-    fontFamily: 'var(--sans)', fontSize: '14px', fontWeight: 700,
-    cursor: 'pointer', background: active ? 'var(--text)' : 'transparent',
-    color: active ? 'white' : 'var(--muted)',
-  })
-
-  const statusBadge = (status) => {
-    const colors = { pending: ['var(--yellow-light)', 'var(--yellow)'], approved: ['var(--green-light)', 'var(--green)'], rejected: ['var(--red-light)', 'var(--red)'], active: ['var(--green-light)', 'var(--green)'], removed: ['var(--surface)', 'var(--muted)'] }
-    const [bg, color] = colors[status] || ['var(--surface)', 'var(--muted)']
-    return <span style={{ fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '5px', background: bg, color }}>{status}</span>
-  }
+  const tabStyle = (t) => ({ padding: '10px 20px', borderRadius: '8px', border: 'none', fontFamily: 'var(--sans)', fontSize: '14px', fontWeight: 700, cursor: 'pointer', background: tab === t ? 'var(--accent)' : 'transparent', color: tab === t ? 'white' : 'var(--muted)' })
+  const statusBadge = (s, colors) => { const c = colors[s] || ['var(--surface)', 'var(--muted)']; return <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '5px', background: c[0], color: c[1], textTransform: 'uppercase' }}>{s}</span> }
 
   if (loading) return <div style={{ textAlign: 'center', padding: '120px', color: 'var(--muted)' }}>Loading admin panel...</div>
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '48px 40px' }}>
-      <div style={{ marginBottom: '32px' }}>
-        <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--accent)', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '8px' }}>Admin Only</div>
-        <h1 style={{ fontFamily: 'var(--display)', fontSize: '36px', fontWeight: 900, letterSpacing: '-1px' }}>Admin Dashboard</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '32px' }}>
+        <div>
+          <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--accent)', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '8px' }}>Admin</div>
+          <h1 style={{ fontFamily: 'var(--display)', fontSize: '36px', fontWeight: 900, letterSpacing: '-1px' }}>Dashboard</h1>
+        </div>
       </div>
 
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '32px' }}>
         {[
-          { label: 'Total Users', value: stats.users, icon: '👤' },
-          { label: 'Sets in Catalog', value: stats.sets, icon: '📦' },
-          { label: 'Active Listings', value: stats.listings, icon: '🏷️' },
-          { label: 'Pending Submissions', value: stats.pending, icon: '⏳', alert: stats.pending > 0 },
+          { label: 'Pending Submissions', value: stats.pending, color: 'var(--yellow)', urgent: stats.pending > 0 },
+          { label: 'Active Listings', value: stats.activeListings, color: 'var(--green)' },
+          { label: 'Total Users', value: stats.totalUsers, color: 'var(--accent2)' },
+          { label: 'Total Submissions', value: submissions.length, color: 'var(--muted)' },
         ].map(s => (
-          <div key={s.label} style={{
-            padding: '20px', borderRadius: '14px',
-            background: s.alert ? 'var(--yellow-light)' : 'var(--white)',
-            border: `1.5px solid ${s.alert ? 'rgba(196,138,0,0.3)' : 'var(--border)'}`,
-          }}>
-            <div style={{ fontSize: '24px', marginBottom: '8px' }}>{s.icon}</div>
-            <div style={{ fontFamily: 'var(--mono)', fontSize: '28px', fontWeight: 500, marginBottom: '4px', color: s.alert ? 'var(--yellow)' : 'var(--text)' }}>{s.value}</div>
-            <div style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: 600 }}>{s.label}</div>
+          <div key={s.label} style={{ padding: '20px', borderRadius: '14px', background: 'var(--white)', border: `1.5px solid ${s.urgent ? 'var(--yellow)' : 'var(--border)'}` }}>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: '28px', fontWeight: 500, color: s.color, marginBottom: '4px' }}>{s.value}</div>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{s.label}</div>
           </div>
         ))}
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '4px', marginBottom: '24px', background: 'var(--surface)', padding: '4px', borderRadius: '10px', width: 'fit-content' }}>
-        {[['submissions', `Submissions (${submissions.filter(s => s.status === 'pending').length} pending)`], ['listings', 'Listings'], ['pipeline', 'Run Pipeline']].map(([key, label]) => (
-          <button key={key} onClick={() => setTab(key)} style={tabStyle(tab === key)}>{label}</button>
+      <div style={{ display: 'flex', gap: '4px', marginBottom: '24px', background: 'var(--surface)', borderRadius: '10px', padding: '4px', width: 'fit-content' }}>
+        {[['submissions', `Submissions (${stats.pending} pending)`], ['listings', 'Listings'], ['users', 'Users']].map(([t, label]) => (
+          <button key={t} onClick={() => setTab(t)} style={tabStyle(t)}>{label}</button>
         ))}
       </div>
 
+      {/* SUBMISSIONS */}
       {tab === 'submissions' && (
-        <div>
-          <div style={{ display: 'grid', gap: '10px' }}>
-            {submissions.length === 0 && <div style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)' }}>No submissions yet</div>}
-            {submissions.map(sub => (
-              <div key={sub.id} style={{
-                background: 'var(--white)', borderRadius: '12px', border: '1.5px solid var(--border)', padding: '18px 20px',
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '6px' }}>
-                      <div style={{ fontWeight: 800, fontSize: '15px' }}>{sub.name}</div>
-                      {statusBadge(sub.status)}
-                    </div>
-                    <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '4px' }}>
-                      {sub.category} · {sub.theme}
-                      {sub.set_number ? ` · #${sub.set_number}` : ''}
-                      {sub.year_released ? ` · ${sub.year_released}` : ''}
-                      {sub.retail_price ? ` · MSRP ${fmt(sub.retail_price)}` : ''}
-                      {sub.piece_count ? ` · ${sub.piece_count} pieces` : ''}
-                    </div>
-                    <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
-                      Submitted by @{sub.profiles?.username} · {new Date(sub.created_at).toLocaleDateString()}
-                    </div>
-                    {sub.notes && <div style={{ fontSize: '12px', color: 'var(--text)', marginTop: '6px', fontStyle: 'italic' }}>"{sub.notes}"</div>}
+        <div style={{ display: 'grid', gap: '12px' }}>
+          {submissions.length === 0 && <div style={{ textAlign: 'center', padding: '60px', background: 'var(--white)', borderRadius: '16px', border: '1.5px solid var(--border)', color: 'var(--muted)' }}>No submissions yet</div>}
+          {submissions.map(sub => (
+            <div key={sub.id} style={{ background: 'var(--white)', borderRadius: '14px', border: `1.5px solid ${sub.status === 'pending' ? 'var(--yellow)' : 'var(--border)'}`, padding: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: '16px', marginBottom: '4px' }}>{sub.name}</div>
+                  <div style={{ fontSize: '13px', color: 'var(--muted)' }}>
+                    {sub.category} · {sub.theme}
+                    {sub.set_number && ` · #${sub.set_number}`}
+                    {sub.year_released && ` · ${sub.year_released}`}
+                    {sub.retail_price && ` · $${sub.retail_price}`}
+                    {sub.piece_count && ` · ${sub.piece_count} pcs`}
                   </div>
-                  {sub.status === 'pending' && (
-                    <div style={{ display: 'flex', gap: '8px', marginLeft: '16px' }}>
-                      <button onClick={() => approveSubmission(sub)} style={{
-                        padding: '8px 16px', borderRadius: '8px', border: 'none',
-                        background: 'var(--green)', color: 'white', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
-                      }}>✓ Approve</button>
-                      <button onClick={() => rejectSubmission(sub.id)} style={{
-                        padding: '8px 16px', borderRadius: '8px', border: '1.5px solid var(--border)',
-                        background: 'none', color: 'var(--muted)', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
-                      }}>✕ Reject</button>
-                    </div>
-                  )}
+                  <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px' }}>Submitted by @{sub.profiles?.username} · {new Date(sub.created_at).toLocaleDateString()}</div>
+                  {sub.notes && <div style={{ fontSize: '13px', marginTop: '8px', padding: '8px 12px', background: 'var(--surface)', borderRadius: '8px' }}>{sub.notes}</div>}
                 </div>
+                {statusBadge(sub.status, { pending: ['var(--yellow-light)', 'var(--yellow)'], approved: ['var(--green-light)', 'var(--green)'], rejected: ['var(--red-light)', 'var(--red)'] })}
               </div>
-            ))}
-          </div>
-        </div>
-      )}
 
-      {tab === 'listings' && (
-        <div>
-          <div style={{ background: 'var(--white)', borderRadius: '16px', border: '1.5px solid var(--border)', overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 80px', padding: '10px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
-              {['Set', 'Seller', 'Price', 'Status', ''].map(h => (
-                <div key={h} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}</div>
-              ))}
+              {sub.status === 'pending' && (
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <input type="text" placeholder="Review note (optional)" value={reviewNote[sub.id] || ''} onChange={e => setReviewNote({ ...reviewNote, [sub.id]: e.target.value })}
+                    style={{ flex: 1, padding: '8px 12px', borderRadius: '8px', border: '1.5px solid var(--border)', fontFamily: 'var(--sans)', fontSize: '13px', outline: 'none', background: 'var(--bg)' }} />
+                  <button onClick={() => reviewSubmission(sub.id, 'approved')} style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', background: 'var(--green)', color: 'white', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}>Approve</button>
+                  <button onClick={() => reviewSubmission(sub.id, 'rejected')} style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', background: 'var(--red)', color: 'white', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}>Reject</button>
+                </div>
+              )}
             </div>
-            {listings.map((l, i) => (
-              <div key={l.id} style={{
-                display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 80px',
-                padding: '12px 20px', borderBottom: i < listings.length - 1 ? '1px solid var(--border)' : 'none',
-                background: i % 2 === 0 ? 'var(--white)' : 'var(--bg)', alignItems: 'center',
-              }}>
-                <div style={{ fontWeight: 700, fontSize: '13px' }}>{l.sets?.name || l.manual_set_name}</div>
-                <div style={{ fontSize: '12px' }}>@{l.profiles?.username}</div>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: '13px' }}>{fmt(l.price)}</div>
-                <div>{statusBadge(l.status)}</div>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <a href={`/marketplace/${l.id}`} style={{ fontSize: '11px', color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>View</a>
-                  {l.status === 'active' && (
-                    <button onClick={() => removeListing(l.id)} style={{ fontSize: '11px', color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700 }}>Remove</button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
+          ))}
         </div>
       )}
 
-      {tab === 'pipeline' && (
-        <div style={{ background: 'var(--white)', borderRadius: '16px', border: '1.5px solid var(--border)', padding: '32px' }}>
-          <h2 style={{ fontFamily: 'var(--display)', fontSize: '22px', fontWeight: 900, marginBottom: '12px' }}>eBay Price Pipeline</h2>
-          <p style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '24px', lineHeight: 1.6 }}>
-            Run the eBay scraper manually from Replit. The pipeline fetches sold listings and updates average prices in the database.
-            Run after midnight Pacific time when the daily rate limit resets.
-          </p>
-          <div style={{ padding: '16px', background: 'var(--surface)', borderRadius: '10px', fontFamily: 'var(--mono)', fontSize: '13px', marginBottom: '16px' }}>
-            node pipeline_v4.js
+      {/* LISTINGS */}
+      {tab === 'listings' && (
+        <div style={{ background: 'var(--white)', borderRadius: '14px', border: '1.5px solid var(--border)', overflow: 'hidden' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 80px', padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
+            {['Set', 'Seller', 'Price', 'Status', ''].map(h => (
+              <div key={h} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}</div>
+            ))}
           </div>
-          <div style={{ fontSize: '13px', color: 'var(--muted)' }}>
-            Last updated: Check Supabase → sets table → last_price_update column for the most recent run.
+          {listings.map((l, i) => (
+            <div key={l.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 80px', padding: '14px 20px', borderBottom: i < listings.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center', background: i % 2 === 0 ? 'var(--white)' : 'var(--bg)' }}>
+              <div style={{ fontWeight: 700, fontSize: '13px' }}>{l.sets?.name || l.manual_set_name}</div>
+              <div style={{ fontSize: '12px', color: 'var(--accent)', fontWeight: 700 }}>@{l.profiles?.username}</div>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: '13px' }}>${parseFloat(l.price).toFixed(2)}</div>
+              <div>{statusBadge(l.status, { active: ['var(--green-light)', 'var(--green)'], sold: ['var(--yellow-light)', 'var(--yellow)'], removed: ['var(--surface)', 'var(--muted)'] })}</div>
+              {l.status === 'active' && <button onClick={() => removeListing(l.id)} style={{ padding: '5px 10px', borderRadius: '6px', border: '1.5px solid var(--border)', fontSize: '11px', fontWeight: 700, cursor: 'pointer', background: 'none', color: 'var(--red)' }}>Remove</button>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* USERS */}
+      {tab === 'users' && (
+        <div style={{ background: 'var(--white)', borderRadius: '14px', border: '1.5px solid var(--border)', overflow: 'hidden' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 80px', padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
+            {['Username', 'Display Name', 'Joined', 'Admin'].map(h => (
+              <div key={h} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}</div>
+            ))}
           </div>
+          {users.map((u, i) => (
+            <div key={u.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 80px', padding: '12px 20px', borderBottom: i < users.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center', background: i % 2 === 0 ? 'var(--white)' : 'var(--bg)' }}>
+              <a href={`/u/${u.username}`} style={{ fontWeight: 700, fontSize: '13px', color: 'var(--accent)', textDecoration: 'none' }}>@{u.username}</a>
+              <div style={{ fontSize: '13px' }}>{u.display_name || '—'}</div>
+              <div style={{ fontSize: '12px', color: 'var(--muted)' }}>{new Date(u.created_at).toLocaleDateString()}</div>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: u.is_admin ? 'var(--green)' : 'var(--muted)' }}>{u.is_admin ? '✓ Admin' : '—'}</div>
+            </div>
+          ))}
         </div>
       )}
     </div>

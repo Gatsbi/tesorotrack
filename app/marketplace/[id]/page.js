@@ -3,13 +3,13 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../supabase'
 import { useAuth } from '../../AuthProvider'
 
-export default function ListingDetailPage({ params }) {
+export default function ListingPage({ params }) {
   const { user } = useAuth()
   const [listing, setListing] = useState(null)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
-  const [messageSent, setMessageSent] = useState(false)
+  const [sent, setSent] = useState(false)
   const [conversation, setConversation] = useState(null)
   const [messages, setMessages] = useState([])
 
@@ -18,249 +18,208 @@ export default function ListingDetailPage({ params }) {
   async function loadListing() {
     const { data } = await supabase
       .from('marketplace_listings')
-      .select('*, sets(name, category, theme, avg_sale_price, retail_price), profiles!seller_id(id, username, display_name, total_sales, member_since, bio, location)')
+      .select(`*, sets(id, name, category, theme, avg_sale_price, retail_price), profiles(id, username, display_name, location, total_sales, member_since)`)
       .eq('id', params.id)
       .single()
     setListing(data)
 
     // Increment views
-    if (data) supabase.from('marketplace_listings').update({ views: (data.views || 0) + 1 }).eq('id', params.id)
+    if (data) await supabase.from('marketplace_listings').update({ views: (data.views || 0) + 1 }).eq('id', params.id)
 
     // Load existing conversation if user is logged in
-    if (user && data) {
-      const { data: conv } = await supabase
+    if (user) {
+      const { data: convData } = await supabase
         .from('conversations')
         .select('*')
         .eq('listing_id', params.id)
         .eq('buyer_id', user.id)
         .single()
-
-      if (conv) {
-        setConversation(conv)
-        const { data: msgs } = await supabase
-          .from('messages')
-          .select('*, profiles!sender_id(username, display_name)')
-          .eq('listing_id', params.id)
-          .order('created_at', { ascending: true })
-        setMessages(msgs || [])
+      if (convData) {
+        setConversation(convData)
+        loadMessages(convData.id)
       }
     }
     setLoading(false)
   }
 
-  const sendMessage = async () => {
+  async function loadMessages(convId) {
+    const { data } = await supabase
+      .from('messages')
+      .select('*, profiles!sender_id(username, display_name)')
+      .eq('conversation_id', convId)
+      .order('created_at', { ascending: true })
+    setMessages(data || [])
+  }
+
+  async function sendMessage() {
     if (!user) { window.location.href = '/login'; return }
     if (!message.trim()) return
     setSending(true)
 
     let convId = conversation?.id
+
+    // Create conversation if doesn't exist
     if (!convId) {
-      // Create conversation
-      const { data: newConv } = await supabase.from('conversations').insert({
+      const { data: convData } = await supabase.from('conversations').insert({
         listing_id: listing.id,
         buyer_id: user.id,
-        seller_id: listing.profiles.id,
+        seller_id: listing.seller_id,
         last_message_at: new Date().toISOString(),
       }).select().single()
-      convId = newConv?.id
-      setConversation(newConv)
+      convId = convData.id
+      setConversation(convData)
     }
 
-    // Send message
-    const { data: newMsg } = await supabase.from('messages').insert({
-      listing_id: listing.id,
+    await supabase.from('messages').insert({
+      conversation_id: convId,
       sender_id: user.id,
-      recipient_id: listing.profiles.id,
-      body: message,
-    }).select('*, profiles!sender_id(username, display_name)').single()
+      recipient_id: listing.seller_id,
+      body: message.trim(),
+    })
 
-    setMessages([...messages, newMsg])
+    await supabase.from('conversations').update({
+      last_message_at: new Date().toISOString(),
+      seller_unread: (conversation?.seller_unread || 0) + 1,
+    }).eq('id', convId)
+
     setMessage('')
-    setMessageSent(true)
+    setSent(true)
+    loadMessages(convId)
     setSending(false)
   }
 
   const fmt = (n) => n ? `$${parseFloat(n).toFixed(2)}` : '—'
+  const isSeller = user?.id === listing?.seller_id
   const conditionColor = { 'New Sealed': 'var(--green)', 'Open Box': 'var(--yellow)', 'Used - Like New': 'var(--accent2)', 'Used - Good': 'var(--muted)', 'Used - Fair': 'var(--muted)' }
-  const conditionBg = { 'New Sealed': 'var(--green-light)', 'Open Box': 'var(--yellow-light)', 'Used - Like New': '#eef4fd', 'Used - Good': 'var(--surface)', 'Used - Fair': 'var(--surface)' }
 
   if (loading) return <div style={{ textAlign: 'center', padding: '120px', color: 'var(--muted)' }}>Loading...</div>
-  if (!listing) return <div style={{ textAlign: 'center', padding: '120px' }}><h2>Listing not found</h2><a href="/marketplace" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>← Marketplace</a></div>
+  if (!listing) return <div style={{ textAlign: 'center', padding: '120px' }}><h2>Listing not found</h2><a href="/marketplace" style={{ color: 'var(--accent)', fontWeight: 700 }}>← Back to marketplace</a></div>
 
-  const isSeller = user?.id === listing.profiles?.id
-  const pct = listing.sets?.retail_price && listing.price ? Math.round(((listing.price - listing.sets.retail_price) / listing.sets.retail_price) * 100) : null
+  const setName = listing.sets?.name || listing.manual_set_name
+  const category = listing.sets?.category || listing.manual_category
+  const catIcon = { 'Mega Construx': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }[category] || '📦'
 
   return (
     <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '48px 40px' }}>
-      <div style={{ marginBottom: '24px', fontSize: '13px', color: 'var(--muted)', display: 'flex', gap: '6px' }}>
-        <a href="/marketplace" style={{ color: 'var(--muted)', textDecoration: 'none', fontWeight: 600 }}>Marketplace</a>
-        <span>›</span>
-        <span>{listing.sets?.name || listing.manual_set_name}</span>
+      <div style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '24px' }}>
+        <a href="/marketplace" style={{ color: 'var(--muted)', textDecoration: 'none', fontWeight: 600 }}>Marketplace</a> › {setName}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: '32px' }}>
         {/* Left */}
         <div>
           {/* Image placeholder */}
-          <div style={{
-            height: '320px', background: 'var(--surface)', borderRadius: '16px',
-            border: '1.5px solid var(--border)', display: 'flex', alignItems: 'center',
-            justifyContent: 'center', fontSize: '96px', marginBottom: '24px',
-          }}>
-            {{ 'Mega Construx': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }[listing.sets?.category || listing.manual_category] || '📦'}
+          <div style={{ height: '320px', background: 'var(--surface)', borderRadius: '16px', border: '1.5px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '96px', marginBottom: '24px' }}>
+            {catIcon}
           </div>
 
-          <h1 style={{ fontFamily: 'var(--display)', fontSize: '28px', fontWeight: 900, letterSpacing: '-0.5px', marginBottom: '6px' }}>
-            {listing.sets?.name || listing.manual_set_name}
-          </h1>
-          <p style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '20px' }}>
-            {listing.sets?.category || listing.manual_category}
-            {listing.sets?.theme ? ` · ${listing.sets.theme}` : ''}
-            {listing.manual_set_number ? ` · #${listing.manual_set_number}` : ''}
-          </p>
+          {/* Set info */}
+          <h1 style={{ fontFamily: 'var(--display)', fontSize: '28px', fontWeight: 900, letterSpacing: '-0.5px', marginBottom: '6px' }}>{setName}</h1>
+          <div style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '20px' }}>{category}</div>
 
-          {/* Condition + price */}
-          <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', alignItems: 'center' }}>
-            <div style={{ fontFamily: 'var(--mono)', fontSize: '32px', fontWeight: 500 }}>{fmt(listing.price)}</div>
-            <span style={{
-              fontSize: '12px', fontWeight: 700, padding: '4px 10px', borderRadius: '6px',
-              background: conditionBg[listing.condition] || 'var(--surface)',
-              color: conditionColor[listing.condition] || 'var(--muted)',
-            }}>{listing.condition}</span>
-            {pct !== null && (
-              <span style={{
-                fontSize: '12px', fontWeight: 700, padding: '4px 10px', borderRadius: '6px',
-                background: pct >= 0 ? 'var(--red-light)' : 'var(--green-light)',
-                color: pct >= 0 ? 'var(--red)' : 'var(--green)',
-              }}>{pct >= 0 ? '+' : ''}{pct}% vs retail</span>
-            )}
+          {listing.description && (
+            <div style={{ background: 'var(--white)', borderRadius: '12px', border: '1.5px solid var(--border)', padding: '20px', marginBottom: '20px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>Description</div>
+              <p style={{ fontSize: '14px', lineHeight: 1.6, color: 'var(--text)' }}>{listing.description}</p>
+            </div>
+          )}
+
+          {/* Details grid */}
+          <div style={{ background: 'var(--white)', borderRadius: '12px', border: '1.5px solid var(--border)', overflow: 'hidden' }}>
+            {[
+              ['Condition', <span style={{ color: conditionColor[listing.condition], fontWeight: 700 }}>{listing.condition}</span>],
+              ['Ships From', listing.ships_from || '—'],
+              ['Shipping', listing.free_shipping ? <span style={{ color: 'var(--green)', fontWeight: 700 }}>Free</span> : fmt(listing.shipping_cost)],
+              ['Payment', (listing.payment_methods || []).join(', ')],
+              ['Listed', new Date(listing.created_at).toLocaleDateString()],
+              ['Views', listing.views || 0],
+            ].map(([label, value], i) => (
+              <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', borderBottom: i < 5 ? '1px solid var(--border)' : 'none', background: i % 2 === 0 ? 'var(--white)' : 'var(--bg)' }}>
+                <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--muted)' }}>{label}</span>
+                <span style={{ fontSize: '13px', fontWeight: 600 }}>{value}</span>
+              </div>
+            ))}
           </div>
 
           {/* Market comparison */}
           {listing.sets?.avg_sale_price && (
-            <div style={{ padding: '14px 16px', background: 'var(--surface)', borderRadius: '10px', marginBottom: '20px', fontSize: '13px' }}>
-              <span style={{ color: 'var(--muted)', fontWeight: 600 }}>Market avg for this set: </span>
-              <span style={{ fontFamily: 'var(--mono)', fontWeight: 700 }}>{fmt(listing.sets.avg_sale_price)}</span>
-              <a href={`/sets/${listing.set_id}`} style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none', marginLeft: '8px', fontSize: '12px' }}>See price history →</a>
+            <div style={{ marginTop: '16px', padding: '16px 20px', background: 'var(--surface)', borderRadius: '12px', border: '1.5px solid var(--border)' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>Price Comparison</div>
+              <div style={{ display: 'flex', gap: '24px' }}>
+                <div><div style={{ fontFamily: 'var(--mono)', fontSize: '20px', fontWeight: 600 }}>{fmt(listing.price)}</div><div style={{ fontSize: '11px', color: 'var(--muted)' }}>This listing</div></div>
+                <div><div style={{ fontFamily: 'var(--mono)', fontSize: '20px', fontWeight: 600 }}>{fmt(listing.sets.avg_sale_price)}</div><div style={{ fontSize: '11px', color: 'var(--muted)' }}>eBay avg</div></div>
+              </div>
+              <a href={`/sets/${listing.sets.id}`} style={{ fontSize: '12px', color: 'var(--accent)', fontWeight: 700, textDecoration: 'none', marginTop: '8px', display: 'inline-block' }}>View full price history →</a>
             </div>
           )}
-
-          {/* Description */}
-          {listing.description && (
-            <div style={{ marginBottom: '20px' }}>
-              <div style={{ fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--muted)', marginBottom: '8px' }}>Description</div>
-              <p style={{ fontSize: '14px', lineHeight: 1.7, color: 'var(--text)' }}>{listing.description}</p>
-            </div>
-          )}
-
-          {/* Shipping + payment */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            <div style={{ padding: '14px', background: 'var(--white)', borderRadius: '10px', border: '1.5px solid var(--border)' }}>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px' }}>Shipping</div>
-              <div style={{ fontSize: '14px', fontWeight: 700 }}>{listing.free_shipping ? '✓ Free shipping' : listing.shipping_cost ? `+${fmt(listing.shipping_cost)}` : 'Contact seller'}</div>
-              {listing.ships_from && <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '3px' }}>Ships from {listing.ships_from}</div>}
-            </div>
-            <div style={{ padding: '14px', background: 'var(--white)', borderRadius: '10px', border: '1.5px solid var(--border)' }}>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px' }}>Payment</div>
-              <div style={{ fontSize: '13px', fontWeight: 600 }}>{(listing.payment_methods || []).join(' · ')}</div>
-            </div>
-          </div>
-
-          <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '16px' }}>
-            Listed {new Date(listing.created_at).toLocaleDateString()} · {listing.views || 0} views
-          </div>
         </div>
 
-        {/* Right: Seller + Contact */}
-        <div>
+        {/* Right: Price + Contact */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* Price card */}
+          <div style={{ background: 'var(--white)', borderRadius: '16px', border: '1.5px solid var(--border)', padding: '24px' }}>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: '36px', fontWeight: 500, marginBottom: '4px' }}>{fmt(listing.price)}</div>
+            {!listing.free_shipping && listing.shipping_cost > 0 && (
+              <div style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '16px' }}>+ {fmt(listing.shipping_cost)} shipping</div>
+            )}
+            {listing.free_shipping && <div style={{ fontSize: '13px', color: 'var(--green)', fontWeight: 700, marginBottom: '16px' }}>Free shipping</div>}
+
+            {listing.status === 'sold' && (
+              <div style={{ padding: '12px', borderRadius: '10px', background: 'var(--yellow-light)', color: 'var(--yellow)', fontWeight: 700, fontSize: '14px', textAlign: 'center', marginBottom: '12px' }}>This item has been sold</div>
+            )}
+
+            {!isSeller && listing.status === 'active' && (
+              <div>
+                {messages.length > 0 ? (
+                  <div>
+                    <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>Your conversation</div>
+                    <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
+                      {messages.map(msg => (
+                        <div key={msg.id} style={{ padding: '10px 12px', borderRadius: '10px', background: msg.sender_id === user?.id ? 'var(--accent)' : 'var(--surface)', alignSelf: msg.sender_id === user?.id ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
+                          <div style={{ fontSize: '13px', color: msg.sender_id === user?.id ? 'white' : 'var(--text)' }}>{msg.body}</div>
+                          <div style={{ fontSize: '10px', color: msg.sender_id === user?.id ? 'rgba(255,255,255,0.6)' : 'var(--muted)', marginTop: '4px' }}>{new Date(msg.created_at).toLocaleDateString()}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '10px' }}>Message the seller to ask questions or arrange purchase.</div>
+                )}
+                <textarea
+                  placeholder={sent ? 'Send another message...' : 'Hi, is this still available?'}
+                  value={message}
+                  onChange={e => setMessage(e.target.value)}
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1.5px solid var(--border)', fontFamily: 'var(--sans)', fontSize: '14px', outline: 'none', resize: 'none', height: '80px', marginBottom: '10px', background: 'var(--bg)' }}
+                />
+                <button onClick={sendMessage} disabled={sending || !message.trim()} style={{ width: '100%', padding: '12px', borderRadius: '10px', border: 'none', background: sending ? 'var(--border)' : 'var(--accent)', color: sending ? 'var(--muted)' : 'white', fontSize: '14px', fontWeight: 700, cursor: sending ? 'default' : 'pointer' }}>
+                  {!user ? 'Sign in to Message' : sending ? 'Sending...' : sent ? 'Send Another Message' : 'Message Seller'}
+                </button>
+              </div>
+            )}
+
+            {isSeller && (
+              <div style={{ padding: '12px', borderRadius: '10px', background: 'var(--accent-light)', color: 'var(--accent)', fontWeight: 700, fontSize: '13px', textAlign: 'center' }}>This is your listing</div>
+            )}
+          </div>
+
           {/* Seller card */}
-          <div style={{ background: 'var(--white)', borderRadius: '16px', border: '1.5px solid var(--border)', padding: '20px', marginBottom: '16px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '14px' }}>Seller</div>
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '14px' }}>
-              <div style={{
-                width: '48px', height: '48px', borderRadius: '50%', background: 'var(--accent)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '20px', color: 'white', fontFamily: 'var(--display)', fontWeight: 900,
-              }}>
-                {(listing.profiles?.display_name || listing.profiles?.username || '?')[0].toUpperCase()}
+          <div style={{ background: 'var(--white)', borderRadius: '16px', border: '1.5px solid var(--border)', padding: '20px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>Seller</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+              <div style={{ width: '44px', height: '44px', background: 'var(--accent)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--display)', fontSize: '20px', fontWeight: 900, color: 'white' }}>
+                {(listing.profiles?.username || 'U')[0].toUpperCase()}
               </div>
               <div>
                 <div style={{ fontWeight: 800, fontSize: '15px' }}>{listing.profiles?.display_name || listing.profiles?.username}</div>
                 <div style={{ fontSize: '12px', color: 'var(--muted)' }}>@{listing.profiles?.username}</div>
               </div>
             </div>
+            {listing.profiles?.location && <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '8px' }}>📍 {listing.profiles.location}</div>}
             <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>
-              💰 {listing.profiles?.total_sales} sales · 📅 Member since {new Date(listing.profiles?.member_since).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+              {listing.profiles?.total_sales || 0} sales · Member since {listing.profiles?.member_since ? new Date(listing.profiles.member_since).getFullYear() : '2026'}
             </div>
-            {listing.profiles?.location && <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>📍 {listing.profiles.location}</div>}
-            <a href={`/u/${listing.profiles?.username}`} style={{
-              display: 'block', textAlign: 'center', padding: '9px', borderRadius: '8px',
-              border: '1.5px solid var(--border)', fontSize: '13px', fontWeight: 700,
-              textDecoration: 'none', color: 'var(--text)',
-            }}>View full profile →</a>
+            <a href={`/u/${listing.profiles?.username}`} style={{ display: 'block', textAlign: 'center', padding: '8px', borderRadius: '8px', border: '1.5px solid var(--border)', fontSize: '13px', fontWeight: 700, textDecoration: 'none', color: 'var(--text)' }}>View Profile</a>
           </div>
-
-          {/* Message / Contact */}
-          {!isSeller && (
-            <div style={{ background: 'var(--white)', borderRadius: '16px', border: '1.5px solid var(--border)', padding: '20px' }}>
-              <div style={{ fontSize: '13px', fontWeight: 800, marginBottom: '14px' }}>
-                {messages.length > 0 ? 'Your conversation' : 'Contact Seller'}
-              </div>
-
-              {/* Message history */}
-              {messages.length > 0 && (
-                <div style={{ maxHeight: '200px', overflowY: 'auto', marginBottom: '12px', display: 'grid', gap: '8px' }}>
-                  {messages.map(m => (
-                    <div key={m.id} style={{
-                      padding: '10px 12px', borderRadius: '10px', fontSize: '13px',
-                      background: m.sender_id === user?.id ? 'var(--accent)' : 'var(--surface)',
-                      color: m.sender_id === user?.id ? 'white' : 'var(--text)',
-                      alignSelf: m.sender_id === user?.id ? 'flex-end' : 'flex-start',
-                      maxWidth: '85%', justifySelf: m.sender_id === user?.id ? 'end' : 'start',
-                    }}>
-                      <div>{m.body}</div>
-                      <div style={{ fontSize: '10px', opacity: 0.7, marginTop: '3px' }}>{new Date(m.created_at).toLocaleTimeString()}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {messageSent && messages.length === 1 && (
-                <div style={{ padding: '10px', background: 'var(--green-light)', borderRadius: '8px', fontSize: '12px', color: 'var(--green)', fontWeight: 600, marginBottom: '10px' }}>
-                  ✓ Message sent! The seller will reply to your inbox.
-                </div>
-              )}
-
-              <textarea
-                value={message} onChange={e => setMessage(e.target.value)}
-                placeholder={messages.length > 0 ? "Send another message..." : "Hi, is this still available? I'm interested in..."}
-                style={{
-                  width: '100%', padding: '10px 14px', borderRadius: '8px',
-                  border: '1.5px solid var(--border)', fontFamily: 'var(--sans)',
-                  fontSize: '13px', outline: 'none', background: 'var(--bg)',
-                  height: '90px', resize: 'none', marginBottom: '10px',
-                }}
-              />
-              <button onClick={sendMessage} disabled={sending || !message.trim()} style={{
-                width: '100%', padding: '12px', borderRadius: '10px', border: 'none',
-                background: !message.trim() || sending ? 'var(--border)' : 'var(--accent)',
-                color: !message.trim() || sending ? 'var(--muted)' : 'white',
-                fontSize: '14px', fontWeight: 700, cursor: message.trim() && !sending ? 'pointer' : 'default',
-              }}>
-                {!user ? 'Sign in to message' : sending ? 'Sending...' : messages.length > 0 ? 'Send Message' : 'Send Message to Seller'}
-              </button>
-
-              <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '10px', textAlign: 'center' }}>
-                Arrange payment via {(listing.payment_methods || []).join(', ')}
-              </div>
-            </div>
-          )}
-
-          {isSeller && (
-            <div style={{ background: 'var(--yellow-light)', borderRadius: '12px', border: '1.5px solid rgba(196,138,0,0.2)', padding: '16px', fontSize: '13px', color: 'var(--yellow)', fontWeight: 600 }}>
-              This is your listing. <a href="/account" style={{ color: 'var(--yellow)' }}>Manage it in your account →</a>
-            </div>
-          )}
         </div>
       </div>
     </div>
