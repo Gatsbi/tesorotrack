@@ -8,6 +8,12 @@
   "functions": {
     "app/api/update-prices/route.js": {
       "maxDuration": 300
+    },
+    "app/api/import-lego/route.js": {
+      "maxDuration": 300
+    },
+    "app/api/enrich-lego/route.js": {
+      "maxDuration": 300
     }
   }
 }

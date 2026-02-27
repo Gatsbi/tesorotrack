@@ -5,209 +5,177 @@ const BRICKSET_KEY = '3-zAMp-E9Gv-vet3W';
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-async function fetchBricksetSets(theme, pageNumber = 1) {
+async function fetchBricksetTheme(theme, pageNumber = 1) {
   const params = new URLSearchParams({
     apiKey: BRICKSET_KEY,
     userHash: '',
-    params: JSON.stringify({
-      theme,
-      pageSize: 500,
-      pageNumber,
-      extendedData: true,
-    }),
+    params: JSON.stringify({ theme, pageSize: 500, pageNumber, extendedData: true }),
   });
-
   const res = await fetch(
     `https://brickset.com/api/v3.asmx/getSets?${params}`,
-    { signal: AbortSignal.timeout(15000) }
+    { signal: AbortSignal.timeout(20000) }
   );
-
   if (!res.ok) throw new Error(`Brickset HTTP ${res.status}`);
   const data = await res.json();
-  if (data.status !== 'success') throw new Error(`Brickset error: ${data.message}`);
-  return data.sets || [];
+  if (data.status !== 'success') throw new Error(`Brickset: ${data.message}`);
+  return { sets: data.sets || [], total: data.matches || 0 };
 }
 
-async function fetchBricksetByNumber(setNumber) {
-  const params = new URLSearchParams({
-    apiKey: BRICKSET_KEY,
-    userHash: '',
-    params: JSON.stringify({
-      setNumber,
-      extendedData: true,
-    }),
+async function enrichTheme(supabase, currentTheme) {
+  // Get all our sets for this theme that need enrichment
+  const { data: ourSets } = await supabase
+    .from('sets')
+    .select('id, name, set_number, retail_price, is_retired, year_retired, piece_count')
+    .eq('category', 'LEGO')
+    .eq('theme', currentTheme)
+    .is('retail_price', null);
+
+  if (!ourSets?.length) {
+    return { theme: currentTheme, skipped: true, reason: 'All sets already enriched' };
+  }
+
+  // Fetch all Brickset data for this theme
+  let bricksetSets = [];
+  try {
+    const page1 = await fetchBricksetTheme(currentTheme);
+    bricksetSets = page1.sets;
+    if (page1.total > 500) {
+      const pages = Math.ceil(page1.total / 500);
+      for (let p = 2; p <= Math.min(pages, 4); p++) {
+        await sleep(600);
+        const pageN = await fetchBricksetTheme(currentTheme, p);
+        bricksetSets.push(...pageN.sets);
+      }
+    }
+  } catch (e) {
+    return { theme: currentTheme, error: e.message };
+  }
+
+  // Build lookup map by set number
+  const bricksetMap = {};
+  bricksetSets.forEach(bs => {
+    if (bs.number) bricksetMap[bs.number] = bs;
+    if (bs.number && bs.numberVariant) {
+      bricksetMap[`${bs.number}-${bs.numberVariant}`] = bs;
+    }
   });
 
-  const res = await fetch(
-    `https://brickset.com/api/v3.asmx/getSets?${params}`,
-    { signal: AbortSignal.timeout(10000) }
-  );
+  // Build updates
+  const updates = [];
+  let notFound = 0;
 
-  if (!res.ok) return null;
-  const data = await res.json();
-  return data.sets?.[0] || null;
-}
+  for (const set of ourSets) {
+    const setNum = set.set_number || '';
+    const bsSet = bricksetMap[setNum] ||
+      bricksetMap[setNum.replace(/-\d+$/, '')] ||
+      bricksetSets.find(bs => bs.name?.toLowerCase() === set.name?.toLowerCase());
 
-function parseRetirementYear(set) {
-  // Brickset provides dateLastAvailable or year + availability
-  if (set.availability === 'Retired') {
-    const lastAvail = set.lastUpdated || set.dateLastAvailable;
-    if (lastAvail) {
-      const year = new Date(lastAvail).getFullYear();
-      if (year > 2000 && year <= new Date().getFullYear()) return year;
+    if (!bsSet) { notFound++; continue; }
+
+    const update = {};
+    const price = bsSet.LEGOCom?.US?.retailPrice || bsSet.USRetailPrice;
+    if (price && price > 0) update.retail_price = price;
+
+    const retireDate = bsSet.LEGOCom?.US?.dateLastAvailable;
+    const isRetired = bsSet.availability === 'Retired' ||
+      (retireDate && new Date(retireDate) < new Date());
+
+    if (isRetired) {
+      update.is_retired = true;
+      if (retireDate) update.year_retired = new Date(retireDate).getFullYear();
+    } else if (bsSet.availability === 'Available') {
+      update.is_retired = false;
     }
-    // Estimate: sets typically retire 2-3 years after release
-    if (set.year) return set.year + 2;
+
+    if (!set.piece_count && bsSet.pieces) update.piece_count = bsSet.pieces;
+
+    if (Object.keys(update).length > 0) updates.push({ id: set.id, ...update });
+    else notFound++;
   }
-  return null;
+
+  // Apply updates
+  for (const u of updates) {
+    const { id, ...fields } = u;
+    await supabase.from('sets').update(fields).eq('id', id);
+    await sleep(50); // small delay to avoid supabase rate limits
+  }
+
+  return {
+    theme: currentTheme,
+    processed: ourSets.length,
+    updated: updates.length,
+    notFound,
+  };
 }
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const theme = searchParams.get('theme');
-  const offset = parseInt(searchParams.get('offset') || '0');
-  const batchSize = parseInt(searchParams.get('batch') || '50');
-  const testMode = searchParams.get('test') === 'true';
-
-  if (!theme) {
-    return Response.json({
-      usage: [
-        'Enrich one theme: /api/enrich-lego?theme=Star+Wars',
-        'With offset: /api/enrich-lego?theme=Star+Wars&offset=100',
-        'Test mode: /api/enrich-lego?theme=Star+Wars&test=true',
-      ],
-    });
-  }
+  const allThemes = searchParams.get('all') === 'true';
 
   if (!SUPABASE_SERVICE_KEY) {
     return Response.json({ error: 'SUPABASE_SERVICE_KEY not set' }, { status: 500 });
   }
 
+  if (!theme && !allThemes) {
+    return Response.json({
+      usage: [
+        'Enrich one theme: /api/enrich-lego?theme=Star+Wars',
+        'Enrich all at once: /api/enrich-lego?all=true (may timeout - use per-theme instead)',
+      ],
+    });
+  }
+
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-  // Get our sets for this theme that need enrichment
-  const { data: ourSets, error } = await supabase
-    .from('sets')
-    .select('id, name, set_number, retail_price, is_retired, year_retired')
-    .eq('category', 'LEGO')
-    .eq('theme', theme)
-    .is('retail_price', null)
-    .range(offset, offset + batchSize - 1);
+  if (allThemes) {
+    // Get all distinct themes that still need enrichment
+    const { data } = await supabase
+      .from('sets')
+      .select('theme')
+      .eq('category', 'LEGO')
+      .is('retail_price', null);
 
-  if (error) return Response.json({ error: error.message }, { status: 500 });
-  if (!ourSets?.length) {
+    const themes = [...new Set(data?.map(s => s.theme).filter(Boolean))].sort();
+
+    // Only process first 3 themes per call to avoid timeout
+    const batch = themes.slice(0, 3);
+    const remaining = themes.slice(3);
+
+    const results = [];
+    for (const t of batch) {
+      const result = await enrichTheme(supabase, t);
+      results.push(result);
+      await sleep(500);
+    }
+
+    const { count: stillMissing } = await supabase
+      .from('sets')
+      .select('*', { count: 'exact', head: true })
+      .eq('category', 'LEGO')
+      .is('retail_price', null);
+
     return Response.json({
-      done: true,
-      message: `No sets needing enrichment for theme: ${theme}`,
-      theme,
+      success: true,
+      processedThemes: batch,
+      remainingThemes: remaining,
+      results,
+      stillMissing,
+      nextCall: remaining.length > 0
+        ? `${request.url.split('?')[0]}?all=true`
+        : null,
+      done: remaining.length === 0,
     });
   }
 
-  if (testMode) {
-    return Response.json({
-      test: true,
-      theme,
-      setsToEnrich: ourSets.length,
-      sample: ourSets.slice(0, 5).map(s => ({ name: s.name, set_number: s.set_number })),
-    });
-  }
+  // Single theme
+  const result = await enrichTheme(supabase, theme);
 
-  // Fetch all Brickset data for this theme at once
-  let bricksetSets = [];
-  try {
-    bricksetSets = await fetchBricksetSets(theme);
-    await sleep(500);
-    // If there are more pages, fetch them
-    if (bricksetSets.length === 500) {
-      const page2 = await fetchBricksetSets(theme, 2);
-      bricksetSets.push(...page2);
-    }
-  } catch (e) {
-    return Response.json({ error: `Brickset fetch failed: ${e.message}` }, { status: 500 });
-  }
-
-  // Build lookup map by set number (Brickset uses format like "75192-1")
-  const bricksetMap = {};
-  bricksetSets.forEach(bs => {
-    // Store by base set number (without -1 suffix)
-    const base = bs.number || '';
-    bricksetMap[base] = bs;
-    // Also store with full number
-    if (bs.numberVariant) {
-      bricksetMap[`${base}-${bs.numberVariant}`] = bs;
-    }
-  });
-
-  let updated = 0;
-  let notFound = 0;
-  const log = [];
-
-  for (const set of ourSets) {
-    // Try to find matching Brickset entry
-    const setNum = set.set_number || '';
-    const bsSet = bricksetMap[setNum] ||
-      bricksetMap[setNum.replace(/-\d+$/, '')] ||
-      bricksetSets.find(bs =>
-        bs.name?.toLowerCase() === set.name?.toLowerCase()
-      );
-
-    if (!bsSet) {
-      notFound++;
-      continue;
-    }
-
-    const updates = {};
-
-    // Retail price
-    const price = bsSet.LEGOCom?.US?.retailPrice || bsSet.USRetailPrice;
-    if (price && price > 0) updates.retail_price = price;
-
-    // Retirement status
-    const isRetired = bsSet.availability === 'Retired' ||
-      (bsSet.LEGOCom?.US?.dateLastAvailable && new Date(bsSet.LEGOCom.US.dateLastAvailable) < new Date());
-    if (isRetired) {
-      updates.is_retired = true;
-      // Try to get retirement year
-      const retireDate = bsSet.LEGOCom?.US?.dateLastAvailable;
-      if (retireDate) {
-        updates.year_retired = new Date(retireDate).getFullYear();
-      }
-    } else if (bsSet.availability === 'Available' || bsSet.availability === '{Not specified}') {
-      updates.is_retired = false;
-    }
-
-    // Piece count if missing
-    if (!set.piece_count && bsSet.pieces) {
-      updates.piece_count = bsSet.pieces;
-    }
-
-    if (Object.keys(updates).length > 0) {
-      const { error: updateError } = await supabase
-        .from('sets')
-        .update(updates)
-        .eq('id', set.id);
-
-      if (!updateError) {
-        updated++;
-        if (log.length < 10) {
-          log.push({
-            name: set.name,
-            set_number: setNum,
-            updates,
-          });
-        }
-      }
-    } else {
-      notFound++;
-    }
-  }
-
-  // Check how many still need enrichment
   const { count: remaining } = await supabase
     .from('sets')
     .select('*', { count: 'exact', head: true })
@@ -215,20 +183,9 @@ export async function GET(request) {
     .eq('theme', theme)
     .is('retail_price', null);
 
-  const nextOffset = offset + batchSize;
-  const hasMore = ourSets.length === batchSize;
-
   return Response.json({
     success: true,
-    theme,
-    offset,
-    processed: ourSets.length,
-    updated,
-    notFound,
-    remaining,
-    nextBatch: hasMore
-      ? `${request.url.split('?')[0]}?theme=${encodeURIComponent(theme)}&offset=${nextOffset}`
-      : null,
-    sampleUpdates: log,
+    ...result,
+    remainingInTheme: remaining,
   });
 }
