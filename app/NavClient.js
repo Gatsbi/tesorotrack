@@ -8,76 +8,85 @@ export default function NavClient() {
     await signOut()
     window.location.href = '/'
   }
+
   return (
     <nav style={{
       position: 'sticky', top: 0, zIndex: 100,
       background: 'rgba(248,247,244,0.94)',
       backdropFilter: 'blur(16px)',
       borderBottom: '1px solid var(--border)',
-      padding: '0 40px', height: '64px',
+      padding: '0 32px', height: '64px',
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     }}>
       <a href="/" style={{
-        fontFamily: 'var(--display)', fontWeight: 900, fontSize: '22px',
+        fontFamily: 'var(--display)', fontWeight: 900, fontSize: '20px',
         color: 'var(--text)', textDecoration: 'none', letterSpacing: '-0.5px',
-        display: 'flex', alignItems: 'center', gap: '10px',
+        display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0,
       }}>
         <span style={{
-          width: '32px', height: '32px', background: 'var(--accent)',
-          borderRadius: '8px', display: 'flex', alignItems: 'center',
-          justifyContent: 'center', fontSize: '16px',
+          width: '30px', height: '30px', background: 'var(--accent)',
+          borderRadius: '7px', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', fontSize: '15px',
         }}>💎</span>
         Tesoro Track
       </a>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '28px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
         {[
           { href: '/browse', label: 'Browse' },
+          { href: '/marketplace', label: 'Marketplace' },
+          { href: '/parts', label: 'Parts Exchange' },
           { href: '/trending', label: 'Trending' },
-          { href: '/portfolio', label: 'Portfolio' },
-          { href: '/watchlist', label: 'Watchlist' },
+          { href: '/submit-set', label: 'Submit a Set' },
           { href: '/about', label: 'About' },
         ].map(link => (
           <a key={link.href} href={link.href} style={{
-            fontSize: '14px', fontWeight: 600, color: 'var(--muted)',
-            textDecoration: 'none', transition: 'color 0.2s',
+            fontSize: '13px', fontWeight: 600, color: 'var(--muted)',
+            textDecoration: 'none', padding: '6px 10px', borderRadius: '6px',
+            transition: 'all 0.15s',
           }}
-            onMouseEnter={e => e.target.style.color = 'var(--text)'}
-            onMouseLeave={e => e.target.style.color = 'var(--muted)'}
+            onMouseEnter={e => { e.target.style.color = 'var(--text)'; e.target.style.background = 'var(--surface)' }}
+            onMouseLeave={e => { e.target.style.color = 'var(--muted)'; e.target.style.background = 'transparent' }}
           >{link.label}</a>
         ))}
       </div>
 
-      <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
         <a href="/search" style={{
-          fontFamily: 'var(--sans)', fontSize: '14px', fontWeight: 600,
-          padding: '8px 18px', borderRadius: '8px', cursor: 'pointer',
+          fontSize: '13px', fontWeight: 600, padding: '7px 14px', borderRadius: '7px',
           border: '1.5px solid var(--border)', background: 'transparent',
           color: 'var(--muted)', textDecoration: 'none',
-          display: 'inline-flex', alignItems: 'center', gap: '6px',
+          display: 'inline-flex', alignItems: 'center', gap: '5px',
         }}>🔍 Search</a>
+
         {user ? (
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <a href="/messages" style={{
+              fontSize: '13px', fontWeight: 600, padding: '7px 14px', borderRadius: '7px',
+              border: '1.5px solid var(--border)', background: 'transparent',
+              color: 'var(--muted)', textDecoration: 'none',
+            }}>💬 Messages</a>
             <a href="/portfolio" style={{
-              fontFamily: 'var(--sans)', fontSize: '14px', fontWeight: 700,
-              padding: '8px 18px', borderRadius: '8px',
+              fontSize: '13px', fontWeight: 600, padding: '7px 14px', borderRadius: '7px',
+              border: '1.5px solid var(--border)', background: 'transparent',
+              color: 'var(--muted)', textDecoration: 'none',
+            }}>📦 Portfolio</a>
+            <a href="/account" style={{
+              fontSize: '13px', fontWeight: 700, padding: '7px 16px', borderRadius: '7px',
               background: 'var(--accent)', color: 'white', textDecoration: 'none',
-              display: 'inline-flex', alignItems: 'center',
-              boxShadow: '0 4px 14px rgba(200,82,42,0.3)',
-            }}>My Portfolio</a>
+              boxShadow: '0 3px 10px rgba(200,82,42,0.3)',
+            }}>My Account</a>
             <button onClick={handleSignOut} style={{
-              fontFamily: 'var(--sans)', fontSize: '13px', fontWeight: 600,
-              padding: '8px 14px', borderRadius: '8px', cursor: 'pointer',
-              border: '1.5px solid var(--border)', background: 'transparent', color: 'var(--muted)',
+              fontSize: '13px', fontWeight: 600, padding: '7px 12px', borderRadius: '7px',
+              border: '1.5px solid var(--border)', background: 'transparent',
+              color: 'var(--muted)', cursor: 'pointer',
             }}>Sign Out</button>
           </div>
         ) : (
           <a href="/login" style={{
-            fontFamily: 'var(--sans)', fontSize: '14px', fontWeight: 700,
-            padding: '8px 18px', borderRadius: '8px',
+            fontSize: '13px', fontWeight: 700, padding: '7px 18px', borderRadius: '7px',
             background: 'var(--accent)', color: 'white', textDecoration: 'none',
-            display: 'inline-flex', alignItems: 'center',
-            boxShadow: '0 4px 14px rgba(200,82,42,0.3)',
+            boxShadow: '0 3px 10px rgba(200,82,42,0.3)',
           }}>Sign In</a>
         )}
       </div>
