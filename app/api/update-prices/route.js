@@ -4,7 +4,6 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const EBAY_APP_ID = process.env.EBAY_APP_ID;
 
-// Set max duration for this route (Vercel Pro: 300s, Hobby: 60s)
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
@@ -52,21 +51,46 @@ async function searchEbay(group) {
     'itemFilter(2).name': 'Currency',
     'itemFilter(2).value': 'USD',
     'sortOrder': 'EndTimeSoonest',
-    'paginationInput.entriesPerPage': '100',
+    'paginationInput.entriesPerPage': '10', // Small for debug
   });
 
   try {
     const res = await fetch(
       `https://svcs.ebay.com/services/search/FindingService/v1?${params}`,
-      { signal: AbortSignal.timeout(8000) } // 8s timeout per eBay call
+      { signal: AbortSignal.timeout(8000) }
     );
-    const data = await res.json();
+    const text = await res.text();
+    
+    // Check for error responses
+    if (text.includes('Invalid app id') || text.includes('invalid application')) {
+      return { error: 'Invalid eBay App ID', raw: text.substring(0, 200) };
+    }
+    if (text.includes('RateLimiter') || text.includes('rate limit')) {
+      return { error: 'Rate limited by eBay', raw: text.substring(0, 200) };
+    }
+
+    const data = JSON.parse(text);
     const result = data?.findCompletedItemsResponse?.[0];
-    if (result?.ack?.[0] !== 'Success' && result?.ack?.[0] !== 'Warning') return [];
-    return result?.searchResult?.[0]?.item || [];
+    const ack = result?.ack?.[0];
+    
+    if (ack !== 'Success' && ack !== 'Warning') {
+      return { 
+        error: `eBay ack: ${ack}`, 
+        ebayError: result?.errorMessage?.[0]?.error?.[0]?.message?.[0],
+      };
+    }
+
+    const items = result?.searchResult?.[0]?.item || [];
+    return { 
+      success: true, 
+      totalResults: result?.paginationOutput?.[0]?.totalEntries?.[0],
+      itemCount: items.length,
+      // Return first item title as sample
+      sampleTitle: items[0]?.title?.[0] || 'no items',
+      items,
+    };
   } catch (e) {
-    console.error(`eBay error for ${group.query}:`, e.message);
-    return [];
+    return { error: e.message };
   }
 }
 
@@ -115,45 +139,63 @@ function parseListing(item, setId) {
   };
 }
 
-async function updateAverages(supabase, setIds) {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 90);
-  const cutoffStr = cutoff.toISOString().split('T')[0];
-
-  for (const setId of setIds) {
-    const { data: prices } = await supabase
-      .from('prices').select('sale_price, condition')
-      .eq('set_id', setId).gte('sale_date', cutoffStr).eq('source', 'ebay');
-
-    if (!prices?.length) continue;
-
-    const sorted = prices.map(p => p.sale_price).sort((a, b) => a - b);
-    const trim = Math.floor(sorted.length * 0.1);
-    const trimmed = sorted.slice(trim, sorted.length - trim);
-    const avg = trimmed.reduce((s, p) => s + p, 0) / trimmed.length;
-
-    const newPrices = prices.filter(p => p.condition === 'New Sealed').map(p => p.sale_price);
-    const newAvg = newPrices.length > 0 ? newPrices.reduce((s, p) => s + p, 0) / newPrices.length : null;
-
-    await supabase.from('sets').update({
-      avg_sale_price: Math.round(avg * 100) / 100,
-      new_avg_price: newAvg ? Math.round(newAvg * 100) / 100 : null,
-      last_price_update: new Date().toISOString(),
-      total_sales: prices.length,
-    }).eq('id', setId);
-  }
-}
-
 export async function GET(request) {
-  if (!EBAY_APP_ID) return Response.json({ error: 'EBAY_APP_ID not configured' }, { status: 500 });
-  if (!SUPABASE_SERVICE_KEY) return Response.json({ error: 'SUPABASE_SERVICE_KEY not configured' }, { status: 500 });
+  if (!EBAY_APP_ID) return Response.json({ error: 'EBAY_APP_ID not set in env vars' }, { status: 500 });
+  if (!SUPABASE_SERVICE_KEY) return Response.json({ error: 'SUPABASE_SERVICE_KEY not set in env vars' }, { status: 500 });
+
+  // Debug mode — test just the first group and return full diagnostics
+  const { searchParams } = new URL(request.url);
+  const debug = searchParams.get('debug') === 'true';
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-  // Check which group to process (supports pagination via ?batch=0, ?batch=1 etc)
-  const { searchParams } = new URL(request.url);
+  // Load sets and show count
+  const { data: sets, error: setsError } = await supabase
+    .from('sets').select('id, name, category, theme, set_number');
+  
+  if (setsError) return Response.json({ error: 'Supabase error', detail: setsError.message }, { status: 500 });
+
+  const setCount = sets?.length || 0;
+  const setsByTheme = {};
+  sets?.forEach(s => {
+    const key = `${s.category}/${s.theme}`;
+    setsByTheme[key] = (setsByTheme[key] || 0) + 1;
+  });
+
+  if (debug) {
+    // Just test the first group and return diagnostics
+    const group = SEARCH_GROUPS[0];
+    const ebayResult = await searchEbay(group);
+
+    let matchResults = [];
+    if (ebayResult.items?.length > 0) {
+      for (const item of ebayResult.items.slice(0, 5)) {
+        const matched = matchToSet(item, sets, group);
+        matchResults.push({
+          title: item?.title?.[0],
+          matched: matched?.name || null,
+        });
+      }
+    }
+
+    return Response.json({
+      debug: true,
+      ebayAppId: EBAY_APP_ID ? `${EBAY_APP_ID.substring(0, 10)}...` : 'NOT SET',
+      setsInDb: setCount,
+      setsByTheme,
+      testGroup: group.query,
+      ebayResult: ebayResult.error ? ebayResult : {
+        totalResults: ebayResult.totalResults,
+        itemCount: ebayResult.itemCount,
+        sampleTitle: ebayResult.sampleTitle,
+      },
+      matchResults,
+    });
+  }
+
+  // Normal batch processing
   const batch = parseInt(searchParams.get('batch') || '0');
-  const batchSize = 8; // Process 8 groups per call to stay under timeout
+  const batchSize = 8;
   const groupsToProcess = SEARCH_GROUPS.slice(batch * batchSize, (batch + 1) * batchSize);
   const isLastBatch = (batch + 1) * batchSize >= SEARCH_GROUPS.length;
 
@@ -161,17 +203,21 @@ export async function GET(request) {
     return Response.json({ done: true, message: 'All groups processed' });
   }
 
-  const { data: sets } = await supabase.from('sets').select('id, name, category, theme, set_number');
-  if (!sets?.length) return Response.json({ error: 'No sets in database' }, { status: 500 });
-
   let totalSaved = 0;
   const updatedSetIds = new Set();
+  const groupLog = [];
 
   for (const group of groupsToProcess) {
-    const items = await searchEbay(group);
-    const prices = [];
+    const ebayResult = await searchEbay(group);
+    const groupSetsCount = sets.filter(s => s.category === group.category && s.theme === group.theme).length;
 
-    for (const item of items) {
+    if (ebayResult.error) {
+      groupLog.push({ group: group.query, error: ebayResult.error });
+      continue;
+    }
+
+    const prices = [];
+    for (const item of (ebayResult.items || [])) {
       const set = matchToSet(item, sets, group);
       if (!set) continue;
       const price = parseListing(item, set.id);
@@ -185,10 +231,41 @@ export async function GET(request) {
       if (!error) totalSaved += prices.length;
     }
 
-    await sleep(500); // Reduced to 500ms between calls
+    groupLog.push({
+      group: group.query,
+      ebayItems: ebayResult.itemCount,
+      setsInTheme: groupSetsCount,
+      pricesSaved: prices.length,
+    });
+
+    await sleep(500);
   }
 
-  await updateAverages(supabase, [...updatedSetIds]);
+  // Update averages
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 90);
+  const cutoffStr = cutoff.toISOString().split('T')[0];
+
+  for (const setId of updatedSetIds) {
+    const { data: prices } = await supabase
+      .from('prices').select('sale_price, condition')
+      .eq('set_id', setId).gte('sale_date', cutoffStr);
+
+    if (!prices?.length) continue;
+    const sorted = prices.map(p => p.sale_price).sort((a, b) => a - b);
+    const trim = Math.floor(sorted.length * 0.1);
+    const trimmed = sorted.slice(trim, sorted.length - trim || sorted.length);
+    const avg = trimmed.reduce((s, p) => s + p, 0) / trimmed.length;
+    const newPrices = prices.filter(p => p.condition === 'New Sealed').map(p => p.sale_price);
+    const newAvg = newPrices.length ? newPrices.reduce((s, p) => s + p, 0) / newPrices.length : null;
+
+    await supabase.from('sets').update({
+      avg_sale_price: Math.round(avg * 100) / 100,
+      new_avg_price: newAvg ? Math.round(newAvg * 100) / 100 : null,
+      last_price_update: new Date().toISOString(),
+      total_sales: prices.length,
+    }).eq('id', setId);
+  }
 
   return Response.json({
     success: true,
@@ -196,6 +273,7 @@ export async function GET(request) {
     groupsProcessed: groupsToProcess.length,
     pricesSaved: totalSaved,
     setsUpdated: updatedSetIds.size,
+    groupLog,
     nextBatch: isLastBatch ? null : `${request.url.split('?')[0]}?batch=${batch + 1}`,
     isLastBatch,
     timestamp: new Date().toISOString(),
