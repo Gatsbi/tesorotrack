@@ -13,29 +13,66 @@ export default function MarketplacePage() {
   useEffect(() => { loadListings() }, [category, condition, sort])
 
   async function loadListings() {
+    setLoading(true)
     let query = supabase
       .from('marketplace_listings')
-      .select(`*, sets(name, category, theme), profiles(username, display_name)`)
+      .select(`*, sets(name, category, theme)`)
       .eq('status', 'active')
 
-    if (category !== 'All') query = query.eq('sets.category', category)
     if (condition !== 'All') query = query.eq('condition', condition)
     if (sort === 'newest') query = query.order('created_at', { ascending: false })
     if (sort === 'price-low') query = query.order('price', { ascending: true })
     if (sort === 'price-high') query = query.order('price', { ascending: false })
 
-    const { data } = await query.limit(60)
-    setListings(data || [])
+    const { data: listingsData, error } = await query.limit(60)
+    if (error) { console.error(error); setLoading(false); return }
+
+    // Fetch profiles separately for each unique seller
+    const sellerIds = [...new Set((listingsData || []).map(l => l.seller_id))]
+    let profileMap = {}
+    if (sellerIds.length > 0) {
+      const { data: profilesData } = await supabase
+        .from('profiles')
+        .select('id, username, display_name')
+        .in('id', sellerIds)
+      if (profilesData) {
+        profilesData.forEach(p => { profileMap[p.id] = p })
+      }
+    }
+
+    // Attach profiles to listings
+    let enriched = (listingsData || []).map(l => ({
+      ...l,
+      profile: profileMap[l.seller_id] || null,
+    }))
+
+    // Filter by category (works for both catalog sets and manual)
+    if (category !== 'All') {
+      enriched = enriched.filter(l =>
+        l.sets?.category === category || l.manual_category === category
+      )
+    }
+
+    setListings(enriched)
     setLoading(false)
   }
 
   const filtered = search
-    ? listings.filter(l => (l.sets?.name || l.manual_set_name || '').toLowerCase().includes(search.toLowerCase()))
+    ? listings.filter(l =>
+        (l.sets?.name || l.manual_set_name || '').toLowerCase().includes(search.toLowerCase())
+      )
     : listings
 
-  const selectStyle = { fontFamily: 'var(--sans)', fontSize: '13px', fontWeight: 600, padding: '8px 12px', borderRadius: '8px', border: '1.5px solid var(--border)', background: 'var(--white)', color: 'var(--text)', cursor: 'pointer', outline: 'none' }
+  const selectStyle = {
+    fontFamily: 'var(--sans)', fontSize: '13px', fontWeight: 600,
+    padding: '8px 12px', borderRadius: '8px', border: '1.5px solid var(--border)',
+    background: 'var(--white)', color: 'var(--text)', cursor: 'pointer', outline: 'none',
+  }
 
-  const conditionColor = { 'New Sealed': 'var(--green)', 'Open Box': 'var(--yellow)', 'Used - Like New': 'var(--accent2)', 'Used - Good': 'var(--muted)', 'Used - Fair': 'var(--muted)' }
+  const conditionColor = {
+    'New Sealed': 'var(--green)', 'Open Box': 'var(--yellow)',
+    'Used - Like New': 'var(--muted)', 'Used - Good': 'var(--muted)', 'Used - Fair': 'var(--muted)',
+  }
 
   return (
     <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '48px 40px' }}>
@@ -45,12 +82,21 @@ export default function MarketplacePage() {
           <h1 style={{ fontFamily: 'var(--display)', fontSize: '40px', fontWeight: 900, letterSpacing: '-1.5px' }}>Marketplace</h1>
           <p style={{ fontSize: '15px', color: 'var(--muted)', marginTop: '6px' }}>Buy and sell sets directly with other collectors.</p>
         </div>
-        <a href="/marketplace/new" style={{ background: 'var(--accent)', color: 'white', padding: '12px 24px', borderRadius: '10px', fontSize: '14px', fontWeight: 700, textDecoration: 'none', boxShadow: '0 4px 14px rgba(200,82,42,0.3)' }}>+ Sell a Set</a>
+        <a href="/marketplace/new" style={{
+          background: 'var(--accent)', color: 'white', padding: '12px 24px',
+          borderRadius: '10px', fontSize: '14px', fontWeight: 700, textDecoration: 'none',
+          boxShadow: '0 4px 14px rgba(200,82,42,0.3)',
+        }}>+ Sell a Set</a>
       </div>
 
       {/* Filters */}
-      <div style={{ display: 'flex', gap: '10px', marginBottom: '32px', padding: '16px', background: 'var(--white)', borderRadius: '12px', border: '1.5px solid var(--border)', flexWrap: 'wrap', alignItems: 'center' }}>
-        <input type="text" placeholder="Search listings..." value={search} onChange={e => setSearch(e.target.value)}
+      <div style={{
+        display: 'flex', gap: '10px', marginBottom: '32px', padding: '16px',
+        background: 'var(--white)', borderRadius: '12px', border: '1.5px solid var(--border)',
+        flexWrap: 'wrap', alignItems: 'center',
+      }}>
+        <input type="text" placeholder="Search listings..." value={search}
+          onChange={e => setSearch(e.target.value)}
           style={{ ...selectStyle, flex: 1, minWidth: '200px', padding: '8px 14px' }} />
         <select value={category} onChange={e => setCategory(e.target.value)} style={selectStyle}>
           <option value="All">All Categories</option>
@@ -84,14 +130,20 @@ export default function MarketplacePage() {
         </div>
       ) : (
         <>
-          <p style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '20px' }}>{filtered.length} listing{filtered.length !== 1 ? 's' : ''}</p>
+          <p style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '20px' }}>
+            {filtered.length} listing{filtered.length !== 1 ? 's' : ''}
+          </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '16px' }}>
             {filtered.map(listing => {
               const name = listing.sets?.name || listing.manual_set_name || 'Unknown Set'
               const cat = listing.sets?.category || listing.manual_category
               const catIcon = { 'Mega Construx': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }[cat] || '📦'
               return (
-                <a key={listing.id} href={`/marketplace/${listing.id}`} style={{ border: '1.5px solid var(--border)', borderRadius: '14px', overflow: 'hidden', textDecoration: 'none', color: 'inherit', background: 'var(--white)', display: 'block', transition: 'all 0.2s' }}
+                <a key={listing.id} href={`/marketplace/${listing.id}`} style={{
+                  border: '1.5px solid var(--border)', borderRadius: '14px', overflow: 'hidden',
+                  textDecoration: 'none', color: 'inherit', background: 'var(--white)',
+                  display: 'block', transition: 'all 0.2s',
+                }}
                   onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.08)'; e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'var(--accent)' }}
                   onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)' }}
                 >
@@ -105,12 +157,20 @@ export default function MarketplacePage() {
                       {listing.free_shipping && <span style={{ marginLeft: '8px', color: 'var(--green)', fontWeight: 700 }}>Free Shipping</span>}
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ fontFamily: 'var(--mono)', fontSize: '18px', fontWeight: 600 }}>${parseFloat(listing.price).toFixed(2)}</div>
+                      <div style={{ fontFamily: 'var(--mono)', fontSize: '18px', fontWeight: 600 }}>
+                        ${parseFloat(listing.price).toFixed(2)}
+                      </div>
                       <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
-                        by <span style={{ fontWeight: 700, color: 'var(--text)' }}>@{listing.profiles?.username}</span>
+                        by <span style={{ fontWeight: 700, color: 'var(--text)' }}>
+                          @{listing.profile?.username || 'seller'}
+                        </span>
                       </div>
                     </div>
-                    {listing.ships_from && <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '6px' }}>Ships from {listing.ships_from}</div>}
+                    {listing.ships_from && (
+                      <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '6px' }}>
+                        Ships from {listing.ships_from}
+                      </div>
+                    )}
                   </div>
                 </a>
               )

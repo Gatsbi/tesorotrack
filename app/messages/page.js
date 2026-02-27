@@ -13,19 +13,39 @@ export default function MessagesPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!authLoading) {
-      if (!user) { window.location.href = '/login'; return }
-      loadConversations()
-    }
+    if (authLoading) return
+    if (!user) { window.location.href = '/login'; return }
+    loadConversations()
   }, [user, authLoading])
 
   async function loadConversations() {
     const { data } = await supabase
       .from('conversations')
-      .select(`*, marketplace_listings(id, price, sets(name), manual_set_name), buyer:profiles!buyer_id(username, display_name), seller:profiles!seller_id(username, display_name)`)
+      .select(`*, marketplace_listings(id, price, set_id, manual_set_name, sets(name))`)
       .or(`buyer_id.eq.${user.id},seller_id.eq.${user.id}`)
       .order('last_message_at', { ascending: false })
-    setConversations(data || [])
+
+    if (!data) { setLoading(false); return }
+
+    // Fetch all profiles for buyers and sellers
+    const userIds = [...new Set([
+      ...data.map(c => c.buyer_id),
+      ...data.map(c => c.seller_id),
+    ])]
+    const { data: profilesData } = await supabase
+      .from('profiles')
+      .select('id, username, display_name')
+      .in('id', userIds)
+    const profileMap = {}
+    if (profilesData) profilesData.forEach(p => { profileMap[p.id] = p })
+
+    const enriched = data.map(c => ({
+      ...c,
+      buyerProfile: profileMap[c.buyer_id] || null,
+      sellerProfile: profileMap[c.seller_id] || null,
+    }))
+
+    setConversations(enriched)
     setLoading(false)
   }
 
@@ -38,7 +58,6 @@ export default function MessagesPage() {
       .order('created_at', { ascending: true })
     setMessages(data || [])
 
-    // Mark as read
     const field = user.id === conv.buyer_id ? 'buyer_unread' : 'seller_unread'
     await supabase.from('conversations').update({ [field]: 0 }).eq('id', conv.id)
     loadConversations()
@@ -55,7 +74,10 @@ export default function MessagesPage() {
       body: reply.trim(),
     })
     const otherField = user.id === active.buyer_id ? 'seller_unread' : 'buyer_unread'
-    await supabase.from('conversations').update({ last_message_at: new Date().toISOString(), [otherField]: (active[otherField] || 0) + 1 }).eq('id', active.id)
+    await supabase.from('conversations').update({
+      last_message_at: new Date().toISOString(),
+      [otherField]: (active[otherField] || 0) + 1,
+    }).eq('id', active.id)
     setReply('')
     const { data } = await supabase.from('messages').select('*').eq('conversation_id', active.id).order('created_at', { ascending: true })
     setMessages(data || [])
@@ -63,11 +85,11 @@ export default function MessagesPage() {
     setSending(false)
   }
 
-  const getOtherUser = (conv) => user.id === conv.buyer_id ? conv.seller : conv.buyer
+  const getOtherProfile = (conv) => user.id === conv.buyer_id ? conv.sellerProfile : conv.buyerProfile
   const getUnread = (conv) => user.id === conv.buyer_id ? conv.buyer_unread : conv.seller_unread
   const getSetName = (conv) => conv.marketplace_listings?.sets?.name || conv.marketplace_listings?.manual_set_name || 'Listing'
 
-  if (loading) return <div style={{ textAlign: 'center', padding: '120px', color: 'var(--muted)' }}>Loading...</div>
+  if (authLoading || loading) return <div style={{ textAlign: 'center', padding: '120px', color: 'var(--muted)' }}>Loading...</div>
 
   return (
     <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '48px 40px' }}>
@@ -87,16 +109,20 @@ export default function MessagesPage() {
               <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--muted)', fontSize: '14px' }}>No messages yet</div>
             ) : (
               conversations.map(conv => {
-                const other = getOtherUser(conv)
+                const other = getOtherProfile(conv)
                 const unread = getUnread(conv)
                 const isActive = active?.id === conv.id
                 return (
-                  <div key={conv.id} onClick={() => openConversation(conv)} style={{ padding: '14px 20px', cursor: 'pointer', borderBottom: '1px solid var(--border)', background: isActive ? 'var(--accent-light)' : 'transparent', borderLeft: isActive ? '3px solid var(--accent)' : '3px solid transparent', transition: 'all 0.15s' }}
+                  <div key={conv.id} onClick={() => openConversation(conv)} style={{
+                    padding: '14px 20px', cursor: 'pointer', borderBottom: '1px solid var(--border)',
+                    background: isActive ? 'var(--accent-light)' : 'transparent',
+                    borderLeft: isActive ? '3px solid var(--accent)' : '3px solid transparent',
+                  }}
                     onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--surface)' }}
                     onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div style={{ fontWeight: 800, fontSize: '13px' }}>@{other?.username}</div>
+                      <div style={{ fontWeight: 800, fontSize: '13px' }}>@{other?.username || 'user'}</div>
                       {unread > 0 && <span style={{ background: 'var(--accent)', color: 'white', borderRadius: '10px', fontSize: '10px', fontWeight: 700, padding: '2px 7px' }}>{unread}</span>}
                     </div>
                     <div style={{ fontSize: '12px', color: 'var(--accent)', fontWeight: 600, marginTop: '2px' }}>{getSetName(conv)}</div>
@@ -119,12 +145,12 @@ export default function MessagesPage() {
             <>
               <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <div style={{ fontWeight: 800, fontSize: '15px' }}>@{getOtherUser(active)?.username}</div>
-                  <div style={{ fontSize: '12px', color: 'var(--accent)', fontWeight: 600 }}>
-                    <a href={`/marketplace/${active.listing_id}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>{getSetName(active)} →</a>
-                  </div>
+                  <div style={{ fontWeight: 800, fontSize: '15px' }}>@{getOtherProfile(active)?.username || 'user'}</div>
+                  <a href={`/marketplace/${active.listing_id}`} style={{ fontSize: '12px', color: 'var(--accent)', fontWeight: 600, textDecoration: 'none' }}>{getSetName(active)} →</a>
                 </div>
-                <a href={`/u/${getOtherUser(active)?.username}`} style={{ padding: '6px 14px', borderRadius: '8px', border: '1.5px solid var(--border)', fontSize: '12px', fontWeight: 700, textDecoration: 'none', color: 'var(--text)' }}>View Profile</a>
+                {getOtherProfile(active)?.username && (
+                  <a href={`/u/${getOtherProfile(active).username}`} style={{ padding: '6px 14px', borderRadius: '8px', border: '1.5px solid var(--border)', fontSize: '12px', fontWeight: 700, textDecoration: 'none', color: 'var(--text)' }}>View Profile</a>
+                )}
               </div>
 
               <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -132,14 +158,18 @@ export default function MessagesPage() {
                   <div key={msg.id} style={{ display: 'flex', justifyContent: msg.sender_id === user.id ? 'flex-end' : 'flex-start' }}>
                     <div style={{ maxWidth: '70%', padding: '12px 16px', borderRadius: '14px', background: msg.sender_id === user.id ? 'var(--accent)' : 'var(--surface)', color: msg.sender_id === user.id ? 'white' : 'var(--text)' }}>
                       <div style={{ fontSize: '14px', lineHeight: 1.5 }}>{msg.body}</div>
-                      <div style={{ fontSize: '10px', marginTop: '4px', color: msg.sender_id === user.id ? 'rgba(255,255,255,0.6)' : 'var(--muted)' }}>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                      <div style={{ fontSize: '10px', marginTop: '4px', color: msg.sender_id === user.id ? 'rgba(255,255,255,0.6)' : 'var(--muted)' }}>
+                        {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
                     </div>
                   </div>
                 ))}
               </div>
 
               <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)', display: 'flex', gap: '10px' }}>
-                <input type="text" placeholder="Type a message..." value={reply} onChange={e => setReply(e.target.value)} onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendReply()}
+                <input type="text" placeholder="Type a message..." value={reply}
+                  onChange={e => setReply(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendReply()}
                   style={{ flex: 1, padding: '10px 14px', borderRadius: '10px', border: '1.5px solid var(--border)', fontFamily: 'var(--sans)', fontSize: '14px', outline: 'none', background: 'var(--bg)' }} />
                 <button onClick={sendReply} disabled={sending || !reply.trim()} style={{ padding: '10px 20px', borderRadius: '10px', border: 'none', background: sending ? 'var(--border)' : 'var(--accent)', color: 'white', fontWeight: 700, fontSize: '14px', cursor: sending ? 'default' : 'pointer' }}>Send</button>
               </div>
