@@ -10,41 +10,63 @@ export const dynamic = 'force-dynamic';
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-async function rbFetch(path) {
-  const sep = path.includes('?') ? '&' : '?';
-  const res = await fetch(
-    `https://rebrickable.com/api/v3/lego/${path}${sep}key=${REBRICKABLE_KEY}`,
-    { signal: AbortSignal.timeout(15000) }
-  );
-  if (!res.ok) throw new Error(`Rebrickable ${res.status}: ${path}`);
-  return res.json();
-}
+const THEME_GROUPS = [
+  { name: 'Star Wars',                ids: [158, 171] },
+  { name: 'Harry Potter',             ids: [246, 667] },
+  { name: 'Technic',                  ids: [1] },
+  { name: 'Icons',                    ids: [721, 673] },
+  { name: 'Ideas',                    ids: [576] },
+  { name: 'Architecture',             ids: [252, 253] },
+  { name: 'Ninjago',                  ids: [435, 616] },
+  { name: 'City',                     ids: [52] },
+  { name: 'Friends',                  ids: [494] },
+  { name: 'Marvel',                   ids: [696, 702, 704, 705, 706, 707, 715, 750] },
+  { name: 'DC',                       ids: [695, 697, 700, 701, 698, 708] },
+  { name: 'Disney',                   ids: [608, 579, 640, 641] },
+  { name: 'Speed Champions',          ids: [601] },
+  { name: 'Minecraft',                ids: [577] },
+  { name: 'Jurassic World',           ids: [602] },
+  { name: 'Botanicals',               ids: [769] },
+  { name: 'Art',                      ids: [709] },
+  { name: 'Modular Buildings',        ids: [155] },
+  { name: 'Indiana Jones',            ids: [264] },
+  { name: 'Lord of the Rings',        ids: [566] },
+  { name: 'The Hobbit',               ids: [562] },
+  { name: 'Pirates of the Caribbean', ids: [263] },
+  { name: 'Super Mario',              ids: [690] },
+  { name: 'Sonic the Hedgehog',       ids: [747] },
+  { name: 'Overwatch',                ids: [669] },
+  { name: 'Dimensions',               ids: [604] },
+  { name: 'Ghostbusters',             ids: [607] },
+  { name: 'Stranger Things',          ids: [680] },
+  { name: 'Monkie Kid',               ids: [693] },
+  { name: 'Avatar',                   ids: [724, 317] },
+  { name: 'Fortnite',                 ids: [766] },
+  { name: 'Classic',                  ids: [621] },
+  { name: 'Castle',                   ids: [186] },
+  { name: 'Pirates',                  ids: [147] },
+  { name: 'Space',                    ids: [126] },
+  { name: 'Collectible Minifigures',  ids: [535] },
+  { name: 'Brickheadz',               ids: [610] },
+  { name: 'Seasonal',                 ids: [206] },
+  { name: 'Bionicle',                 ids: [324] },
+  { name: 'Animal Crossing',          ids: [752] },
+  { name: 'Zelda',                    ids: [764] },
+  { name: 'Dreamzzz',                 ids: [749] },
+  { name: 'One Piece',                ids: [775] },
+  { name: 'Pokemon',                  ids: [776] },
+];
 
-async function fetchAllThemes() {
-  const themes = [];
-  let url = `themes/?page_size=1000`;
-  while (url) {
-    const data = await rbFetch(url);
-    themes.push(...(data.results || []));
-    if (data.next) {
-      // Extract just the path+query from the next URL
-      url = data.next.replace('https://rebrickable.com/api/v3/lego/', '').replace(`&key=${REBRICKABLE_KEY}`, '').replace(`?key=${REBRICKABLE_KEY}&`, '?');
-      await sleep(1100);
-    } else {
-      url = null;
-    }
-  }
-  return themes;
-}
-
-async function fetchSetsForThemeId(themeId, maxSets = 2000) {
+async function fetchSetsForThemeId(themeId) {
   const sets = [];
-  let url = `sets/?theme_id=${themeId}&page_size=500&ordering=year`;
-  while (url && sets.length < maxSets) {
-    const data = await rbFetch(url);
+  let url = `https://rebrickable.com/api/v3/lego/sets/?theme_id=${themeId}&page_size=500&ordering=year&key=${REBRICKABLE_KEY}`;
+  while (url) {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) break;
+    const data = await res.json();
     sets.push(...(data.results || []));
     if (data.next) {
-      url = data.next.replace('https://rebrickable.com/api/v3/lego/', '').replace(`&key=${REBRICKABLE_KEY}`, '').replace(`?key=${REBRICKABLE_KEY}&`, '?');
+      url = data.next.includes('key=') ? data.next : data.next + '&key=' + REBRICKABLE_KEY;
       await sleep(1100);
     } else {
       url = null;
@@ -77,45 +99,35 @@ async function saveSets(supabase, sets) {
       .from('sets')
       .upsert(batch, { onConflict: 'set_number,category', ignoreDuplicates: false });
     if (!error) saved += batch.length;
-    else console.error('Save error:', error.message);
   }
   return saved;
 }
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
-  const themeParam = searchParams.get('theme'); // e.g. ?theme=Star+Wars
-  const showThemes = searchParams.get('themes') === 'true'; // show all themes with IDs
-  const themeId = searchParams.get('id'); // import by exact theme ID
+  const themeParam = searchParams.get('theme');
+  const listOnly = searchParams.get('list') === 'true';
 
-  // Fetch all themes for lookup
-  let allThemes;
-  try {
-    allThemes = await fetchAllThemes();
-  } catch (e) {
-    return Response.json({ error: `Failed to fetch themes: ${e.message}` }, { status: 500 });
+  if (listOnly) {
+    return Response.json({
+      availableThemes: THEME_GROUPS.map(g => g.name),
+      total: THEME_GROUPS.length,
+      usage: [
+        'Import one: /api/import-lego?theme=Star+Wars',
+        'Import all: /api/import-lego?theme=all',
+        'List: /api/import-lego?list=true',
+      ],
+    });
   }
 
-  // Build parent map
-  const themeById = {};
-  allThemes.forEach(t => { themeById[t.id] = t; });
-
-  const getParentName = (t) => {
-    if (t.parent_id && themeById[t.parent_id]) {
-      return themeById[t.parent_id].name;
-    }
-    return null;
-  };
-
-  // Show all themes with IDs
-  if (showThemes) {
-    const grouped = {};
-    allThemes.forEach(t => {
-      const parent = getParentName(t) || 'Root';
-      if (!grouped[parent]) grouped[parent] = [];
-      grouped[parent].push({ id: t.id, name: t.name });
+  if (!themeParam) {
+    return Response.json({
+      usage: [
+        'Import one: /api/import-lego?theme=Star+Wars',
+        'Import all: /api/import-lego?theme=all',
+        'List themes: /api/import-lego?list=true',
+      ],
     });
-    return Response.json({ totalThemes: allThemes.length, grouped });
   }
 
   if (!SUPABASE_SERVICE_KEY) {
@@ -124,92 +136,67 @@ export async function GET(request) {
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-  // Import by exact theme ID
-  if (themeId) {
-    const theme = themeById[parseInt(themeId)];
-    if (!theme) return Response.json({ error: `Theme ID ${themeId} not found` }, { status: 400 });
+  const groupsToRun = themeParam.toLowerCase() === 'all'
+    ? THEME_GROUPS
+    : THEME_GROUPS.filter(g => g.name.toLowerCase() === themeParam.toLowerCase());
 
-    const sets = await fetchSetsForThemeId(parseInt(themeId));
-    const mapped = sets.map(s => mapSet(s, theme.name)).filter(s => s.name && s.set_number);
-    const saved = await saveSets(supabase, mapped);
-
-    return Response.json({ success: true, themeId, themeName: theme.name, sets: mapped.length, saved });
-  }
-
-  // Import by theme name — finds ALL matching themes (including sub-themes)
-  if (themeParam) {
-    const search = themeParam.toLowerCase();
-
-    // Find all themes whose name or parent name matches
-    const matchingThemes = allThemes.filter(t => {
-      const parentName = getParentName(t);
-      return t.name.toLowerCase().includes(search) ||
-        (parentName && parentName.toLowerCase().includes(search));
-    });
-
-    if (matchingThemes.length === 0) {
-      return Response.json({
-        error: `No themes found matching "${themeParam}"`,
-        hint: 'Try /api/import-lego?themes=true to see all themes',
-      }, { status: 400 });
-    }
-
-    let totalSets = 0;
-    let totalSaved = 0;
-    const log = [];
-
-    for (const theme of matchingThemes) {
-      const parentName = getParentName(theme);
-      // Use parent name as the theme label if available, otherwise use theme name
-      const themeName = parentName || theme.name;
-
-      let sets;
-      try {
-        sets = await fetchSetsForThemeId(theme.id);
-      } catch (e) {
-        log.push({ id: theme.id, name: theme.name, error: e.message });
-        continue;
-      }
-
-      const mapped = sets
-        .map(s => mapSet(s, themeName))
-        .filter(s => s.name && s.set_number);
-
-      if (mapped.length === 0) {
-        log.push({ id: theme.id, name: theme.name, sets: 0 });
-        continue;
-      }
-
-      const saved = await saveSets(supabase, mapped);
-      totalSets += mapped.length;
-      totalSaved += saved;
-      log.push({ id: theme.id, name: theme.name, parent: parentName, sets: mapped.length, saved });
-      await sleep(500);
-    }
-
-    // Get updated count
-    const { count } = await supabase
-      .from('sets')
-      .select('*', { count: 'exact', head: true })
-      .eq('category', 'LEGO');
-
+  if (groupsToRun.length === 0) {
     return Response.json({
-      success: true,
-      query: themeParam,
-      themesFound: matchingThemes.length,
-      totalSets,
-      totalSaved,
-      legoSetsInDb: count,
-      log,
-    });
+      error: 'Theme not found',
+      available: THEME_GROUPS.map(g => g.name),
+    }, { status: 400 });
   }
 
-  // No params — show usage
+  let totalSaved = 0;
+  let totalSets = 0;
+  const log = [];
+
+  for (const group of groupsToRun) {
+    let groupSets = [];
+
+    for (const id of group.ids) {
+      try {
+        const sets = await fetchSetsForThemeId(id);
+        groupSets.push(...sets);
+        await sleep(500);
+      } catch (e) {
+        log.push({ theme: group.name, id, error: e.message });
+      }
+    }
+
+    // Deduplicate by set_num
+    const seen = new Set();
+    groupSets = groupSets.filter(s => {
+      if (seen.has(s.set_num)) return false;
+      seen.add(s.set_num);
+      return true;
+    });
+
+    const mapped = groupSets
+      .map(s => mapSet(s, group.name))
+      .filter(s => s.name && s.set_number);
+
+    if (mapped.length === 0) {
+      log.push({ theme: group.name, sets: 0, saved: 0 });
+      continue;
+    }
+
+    const saved = await saveSets(supabase, mapped);
+    totalSets += mapped.length;
+    totalSaved += saved;
+    log.push({ theme: group.name, sets: mapped.length, saved });
+  }
+
+  const { count } = await supabase
+    .from('sets')
+    .select('*', { count: 'exact', head: true })
+    .eq('category', 'LEGO');
+
   return Response.json({
-    usage: [
-      'See all themes: /api/import-lego?themes=true',
-      'Import by name: /api/import-lego?theme=Star+Wars',
-      'Import by ID: /api/import-lego?id=171',
-    ],
+    success: true,
+    totalSets,
+    totalSaved,
+    legoSetsInDb: count,
+    log,
   });
 }
