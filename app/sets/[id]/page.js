@@ -10,7 +10,6 @@ export default function SetDetailPage({ params }) {
   const [loading, setLoading] = useState(true)
   const [conditionFilter, setConditionFilter] = useState('All')
 
-  // Portfolio modal state
   const [showPortfolioModal, setShowPortfolioModal] = useState(false)
   const [portfolioForm, setPortfolioForm] = useState({ quantity: 1, price_paid: '', condition: 'New Sealed', notes: '' })
   const [saving, setSaving] = useState(false)
@@ -24,7 +23,7 @@ export default function SetDetailPage({ params }) {
     setSet(setData)
     const { data: priceData } = await supabase
       .from('prices').select('*').eq('set_id', params.id)
-      .order('sale_date', { ascending: true }).limit(200)
+      .order('sale_date', { ascending: true }).limit(500)
     setPrices(priceData || [])
     setLoading(false)
   }
@@ -57,18 +56,47 @@ export default function SetDetailPage({ params }) {
   const filteredPrices = conditionFilter === 'All' ? prices : prices.filter(p => p.condition === conditionFilter)
   const conditions = [...new Set(prices.map(p => p.condition).filter(Boolean))]
 
-  const monthlyData = {}
-  filteredPrices.forEach(p => {
-    const month = p.sale_date?.substring(0, 7)
-    if (!month) return
-    if (!monthlyData[month]) monthlyData[month] = []
-    monthlyData[month].push(parseFloat(p.sale_price))
-  })
-  const chartPoints = Object.entries(monthlyData)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([month, vals]) => ({
-      month, avg: vals.reduce((s, v) => s + v, 0) / vals.length, count: vals.length,
-    }))
+  // Build chart points — group by month if dates are spread, otherwise show price distribution
+  const buildChartPoints = (priceList) => {
+    if (!priceList.length) return []
+
+    // Check if all prices have the same date (old data imported with today's date)
+    const uniqueDates = [...new Set(priceList.map(p => p.sale_date).filter(Boolean))]
+    const allSameDate = uniqueDates.length <= 2
+
+    if (!allSameDate) {
+      // Real dates — group by month
+      const monthlyData = {}
+      priceList.forEach(p => {
+        const month = p.sale_date?.substring(0, 7)
+        if (!month) return
+        if (!monthlyData[month]) monthlyData[month] = []
+        monthlyData[month].push(parseFloat(p.sale_price))
+      })
+      return Object.entries(monthlyData)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([month, vals]) => ({
+          label: month.substring(5), // "MM"
+          avg: vals.reduce((s, v) => s + v, 0) / vals.length,
+          count: vals.length,
+        }))
+    } else {
+      // All same date — show price distribution as percentile buckets
+      // Sort prices and split into 8 buckets to simulate a trend line
+      const sorted = [...priceList].sort((a, b) => parseFloat(a.sale_price) - parseFloat(b.sale_price))
+      const bucketSize = Math.max(1, Math.floor(sorted.length / 8))
+      const buckets = []
+      for (let i = 0; i < sorted.length; i += bucketSize) {
+        const chunk = sorted.slice(i, i + bucketSize)
+        const avg = chunk.reduce((s, p) => s + parseFloat(p.sale_price), 0) / chunk.length
+        buckets.push({ label: `${i + 1}`, avg, count: chunk.length })
+      }
+      return buckets
+    }
+  }
+
+  const chartPoints = buildChartPoints(filteredPrices)
+  const allSameDate = [...new Set(filteredPrices.map(p => p.sale_date).filter(Boolean))].length <= 2
 
   const SparkLine = ({ points }) => {
     if (points.length < 2) return null
@@ -119,7 +147,6 @@ export default function SetDetailPage({ params }) {
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '48px 40px' }}>
-      {/* Success toast */}
       {added && (
         <div style={{
           position: 'fixed', bottom: '24px', right: '24px', zIndex: 300,
@@ -129,7 +156,6 @@ export default function SetDetailPage({ params }) {
         }}>✓ Added to portfolio!</div>
       )}
 
-      {/* Breadcrumb */}
       <div style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '24px', display: 'flex', gap: '6px', alignItems: 'center' }}>
         <a href="/browse" style={{ color: 'var(--muted)', textDecoration: 'none', fontWeight: 600 }}>Browse</a>
         <span>›</span>
@@ -154,7 +180,7 @@ export default function SetDetailPage({ params }) {
                 onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'block' }}/>
             ) : null}
             <div style={{ fontSize: '80px', display: set.image_url ? 'none' : 'block' }}>
-              {{ 'Mega Construx': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }[set.category] || '📦'}
+              {{ 'Mega': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }[set.category] || '📦'}
             </div>
             {set.is_retired && (
               <span style={{ fontSize: '12px', fontWeight: 700, padding: '4px 12px', borderRadius: '6px', background: 'var(--red-light)', color: 'var(--red)', border: '1px solid rgba(214,59,59,0.2)' }}>Retired Set</span>
@@ -182,7 +208,6 @@ export default function SetDetailPage({ params }) {
             ))}
           </div>
 
-          {/* Action buttons */}
           <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
             <button onClick={() => setShowPortfolioModal(true)} style={{
               flex: 1, background: 'var(--accent)', color: 'white', border: 'none',
@@ -197,7 +222,7 @@ export default function SetDetailPage({ params }) {
           </div>
         </div>
 
-        {/* Right: Price data */}
+        {/* Right */}
         <div>
           <h1 style={{ fontFamily: 'var(--display)', fontSize: '32px', fontWeight: 900, letterSpacing: '-1px', marginBottom: '6px', lineHeight: 1.2 }}>{set.name}</h1>
           <p style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '24px' }}>{set.category} · {set.theme} {set.set_number ? `· #${set.set_number}` : ''}</p>
@@ -244,7 +269,12 @@ export default function SetDetailPage({ params }) {
 
           <div style={{ background: 'var(--white)', borderRadius: '14px', border: '1.5px solid var(--border)', padding: '20px', marginBottom: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <div style={{ fontWeight: 800, fontSize: '15px' }}>Price History</div>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: '15px' }}>Price History</div>
+                {allSameDate && chartPoints.length >= 2 && (
+                  <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>Showing price distribution — run price update to get timeline data</div>
+                )}
+              </div>
               <div style={{ display: 'flex', gap: '6px' }}>
                 {['All', ...conditions].map(c => (
                   <button key={c} onClick={() => setConditionFilter(c)} style={{
@@ -260,36 +290,43 @@ export default function SetDetailPage({ params }) {
             {chartPoints.length >= 2 ? (
               <>
                 <SparkLine points={chartPoints} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px' }}>
-                  {chartPoints.map(p => (
-                    <div key={p.month} style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: '9px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>{p.month.substring(5)}</div>
-                    </div>
-                  ))}
-                </div>
+                {!allSameDate && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px' }}>
+                    {chartPoints.map(p => (
+                      <div key={p.label} style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '9px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>{p.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             ) : (
-              <div style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)', fontSize: '13px' }}>Not enough price history to chart yet</div>
+              <div style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)', fontSize: '13px' }}>
+                {filteredPrices.length === 0 ? 'No sales data yet' : 'Not enough price history to chart yet'}
+              </div>
             )}
           </div>
 
           <div style={{ background: 'var(--white)', borderRadius: '14px', border: '1.5px solid var(--border)', overflow: 'hidden' }}>
-            <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', fontWeight: 800, fontSize: '15px' }}>Recent eBay Sales</div>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', fontWeight: 800, fontSize: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>Recent eBay Sales</span>
+              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)' }}>{filteredPrices.length} total</span>
+            </div>
             {filteredPrices.length === 0 ? (
               <div style={{ padding: '32px', textAlign: 'center', color: 'var(--muted)', fontSize: '13px' }}>No sales data yet</div>
             ) : (
               <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
-                {filteredPrices.slice(-20).reverse().map((p, i) => (
+                {filteredPrices.slice(-50).reverse().map((p, i) => (
                   <div key={i} style={{
                     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                     padding: '10px 20px', borderBottom: '1px solid var(--border)',
                     background: i % 2 === 0 ? 'var(--white)' : 'var(--bg)',
                   }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '2px', color: 'var(--text)' }}>{p.listing_title?.substring(0, 60)}...</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '2px', color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.listing_title?.substring(0, 60)}...</div>
                       <div style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>{p.sale_date}</div>
                     </div>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
                       <span style={{
                         fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '5px',
                         background: p.condition === 'New Sealed' ? 'var(--green-light)' : p.condition === 'Open Box' ? 'var(--yellow-light)' : 'var(--surface)',
@@ -305,7 +342,6 @@ export default function SetDetailPage({ params }) {
         </div>
       </div>
 
-      {/* Add to Portfolio Modal */}
       {showPortfolioModal && (
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',

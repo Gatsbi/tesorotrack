@@ -14,9 +14,7 @@ async function getEbayToken() {
   const body = new URLSearchParams();
   body.append('grant_type', 'client_credentials');
   body.append('scope', 'https://api.ebay.com/oauth/api_scope');
-
   const b64 = Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64');
-
   try {
     const res = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
       method: 'POST',
@@ -36,27 +34,23 @@ async function getEbayToken() {
   }
 }
 
-// Build the best eBay search query for a set
 function buildQuery(set) {
   const categoryKeyword = {
     'LEGO': 'LEGO',
-    'Mega': set.theme || 'Mega',  // use theme: "Mega Construx", "Mega Bloks" etc
+    'Mega': set.theme || 'Mega',
     'Funko Pop': 'Funko Pop',
   }[set.category] || set.category
-
-  return `${set.set_number} ${categoryKeyword}`
+  return `"${set.set_number}" ${categoryKeyword}`
 }
 
 async function searchBySetNumber(set, token) {
   const query = buildQuery(set)
-
   const params = new URLSearchParams({
     q: query,
     filter: 'conditions:{NEW|USED},buyingOptions:{FIXED_PRICE|AUCTION}',
     limit: '100',
     sort: 'newlyListed',
   });
-
   try {
     const res = await fetch(
       `https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`,
@@ -69,17 +63,27 @@ async function searchBySetNumber(set, token) {
         signal: AbortSignal.timeout(10000),
       }
     );
-
     if (!res.ok) {
       const errText = await res.text();
       return { error: `${res.status}: ${errText.substring(0, 200)}` };
     }
-
     const data = await res.json();
     return { items: data.itemSummaries || [], total: data.total || 0 };
   } catch (e) {
     return { error: e.message };
   }
+}
+
+// Extract real sale date from eBay item (falls back to today if not available)
+function parseSaleDate(item) {
+  // eBay Browse API provides itemEndDate for ended auctions/BIN
+  const endDate = item?.itemEndDate || item?.itemCreationDate
+  if (endDate) {
+    try {
+      return new Date(endDate).toISOString().split('T')[0]
+    } catch (e) {}
+  }
+  return new Date().toISOString().split('T')[0]
 }
 
 function parseItem(item, setId, setNumber) {
@@ -88,11 +92,25 @@ function parseItem(item, setId, setNumber) {
 
   const title = (item?.title || '').toLowerCase();
 
-  const skipKeywords = ['lot of', 'bundle', 'parts only', 'instructions only', 'incomplete', 'custom', 'minifig only', 'minifigure only', 'pieces only'];
+  // Skip accessories, add-ons, and unrelated items
+  const skipKeywords = [
+    'lot of', 'bundle', 'parts only', 'instructions only', 'incomplete',
+    'custom', 'minifig only', 'minifigure only', 'pieces only',
+    'light kit', 'led kit', 'led light', 'lighting kit', 'lights kit',
+    'sticker', 'stickers', 'decal', 'decals',
+    'compatible with', 'fits set', 'for set', 'designed for',
+    'display case', 'display stand', 'frame',
+    'bag', 'polybag',
+  ];
   if (skipKeywords.some(kw => title.includes(kw))) return null;
 
-  // Require set number in title for confidence
-  if (setNumber && !title.includes(setNumber.toLowerCase())) return null;
+  // Require set number appears as a word boundary (not inside another number)
+  // e.g. "76440" should not match "176440" or "764401"
+  if (setNumber) {
+    const escaped = setNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const wordBoundary = new RegExp(`(?<![\\d])${escaped}(?![\\d])`, 'i')
+    if (!wordBoundary.test(item?.title || '')) return null
+  }
 
   const conditionId = item?.conditionId || '';
   const conditionText = (item?.condition || '').toLowerCase();
@@ -104,7 +122,7 @@ function parseItem(item, setId, setNumber) {
   return {
     set_id: setId,
     sale_price: price,
-    sale_date: new Date().toISOString().split('T')[0],
+    sale_date: parseSaleDate(item),  // real date, not today
     condition,
     listing_title: (item?.title || '').substring(0, 255),
     ebay_item_id: (item?.itemId || '').replace(/\|/g, '_'),
@@ -161,6 +179,10 @@ export async function GET(request) {
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
+  // purge=true deletes existing prices for each set before saving new ones
+  // Use this to overwrite bad/old data
+  const purge = searchParams.get('purge') === 'true';
+
   const { data: allSets, error: setsError } = await supabase
     .from('sets')
     .select('id, name, category, theme, set_number')
@@ -183,10 +205,21 @@ export async function GET(request) {
   }
 
   let totalSaved = 0;
+  let totalPurged = 0;
   const updatedSetIds = [];
   const log = [];
 
   for (const set of setsToProcess) {
+    // Purge existing prices for this set if requested
+    if (purge) {
+      const { count } = await supabase
+        .from('prices')
+        .delete()
+        .eq('set_id', set.id)
+        .select('*', { count: 'exact', head: true })
+      totalPurged += count || 0
+    }
+
     const result = await searchBySetNumber(set, token);
 
     if (result.error) {
@@ -232,12 +265,14 @@ export async function GET(request) {
     success: true,
     batch,
     batchSize,
+    purge,
+    totalPurged: purge ? totalPurged : undefined,
     totalSetsWithNumbers: allSets.length,
     setsProcessed: setsToProcess.length,
     pricesSaved: totalSaved,
     setsUpdated: updatedSetIds.length,
     isLastBatch,
-    nextBatch: isLastBatch ? null : `${request.url.split('?')[0]}?batch=${batch + 1}&size=${batchSize}`,
+    nextBatch: isLastBatch ? null : `${request.url.split('?')[0]}?batch=${batch + 1}&size=${batchSize}${purge ? '&purge=true' : ''}`,
     log,
     timestamp: new Date().toISOString(),
   });
