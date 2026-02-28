@@ -11,7 +11,7 @@ export default function HomePage() {
     async function load() {
       const { data: trendingData } = await supabase
         .from('sets')
-        .select('id, name, set_number, category, theme, retail_price, avg_sale_price, total_sales, is_retired, image_url')
+        .select('id, name, set_number, category, theme, retail_price, avg_sale_price, new_avg_price, total_sales, is_retired, image_url')
         .not('avg_sale_price', 'is', null)
         .order('total_sales', { ascending: false })
         .limit(8)
@@ -202,7 +202,8 @@ export default function HomePage() {
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
             {trending.map(set => {
-              const change = pct(set.retail_price, set.avg_sale_price)
+              const displayPrice = set.new_avg_price || set.avg_sale_price
+              const change = pct(set.retail_price, displayPrice)
               return (
                 <a key={set.id} href={`/sets/${set.id}`} style={{
                   border: '1.5px solid var(--border)', borderRadius: '14px',
@@ -250,7 +251,7 @@ export default function HomePage() {
                     <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600, marginBottom: '10px' }}>{set.category} · {set.theme}</div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ fontFamily: 'var(--mono)', fontSize: '16px', fontWeight: 500 }}>
-                        {set.avg_sale_price ? fmt(set.avg_sale_price) : '—'}
+                        {displayPrice ? fmt(displayPrice) : '—'}
                       </div>
                       {change !== null && (
                         <span style={{

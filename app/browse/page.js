@@ -22,7 +22,7 @@ export default function BrowsePage() {
   async function loadSets(cat) {
     let query = supabase
       .from('sets')
-      .select('id, name, set_number, category, theme, retail_price, avg_sale_price, total_sales, is_retired, piece_count, image_url')
+      .select('id, name, set_number, category, theme, retail_price, avg_sale_price, new_avg_price, total_sales, is_retired, piece_count, image_url')
       .order('total_sales', { ascending: false, nullsFirst: false })
 
     if (cat && cat !== 'All') query = query.eq('category', cat)
@@ -44,11 +44,11 @@ export default function BrowsePage() {
     if (retired === 'Active') result = result.filter(s => !s.is_retired)
 
     if (sort === 'popular') result.sort((a, b) => (b.total_sales || 0) - (a.total_sales || 0))
-    if (sort === 'price-high') result.sort((a, b) => (b.avg_sale_price || 0) - (a.avg_sale_price || 0))
-    if (sort === 'price-low') result.sort((a, b) => (a.avg_sale_price || 0) - (b.avg_sale_price || 0))
+    if (sort === 'price-high') result.sort((a, b) => (b.new_avg_price || b.avg_sale_price || 0) - (a.new_avg_price || a.avg_sale_price || 0))
+    if (sort === 'price-low') result.sort((a, b) => (a.new_avg_price || a.avg_sale_price || 0) - (b.new_avg_price || b.avg_sale_price || 0))
     if (sort === 'premium') result.sort((a, b) => {
-      const pa = a.retail_price ? ((a.avg_sale_price - a.retail_price) / a.retail_price) : -99
-      const pb = b.retail_price ? ((b.avg_sale_price - b.retail_price) / b.retail_price) : -99
+      const pa = a.retail_price ? (((a.new_avg_price || a.avg_sale_price) - a.retail_price) / a.retail_price) : -99
+      const pb = b.retail_price ? (((b.new_avg_price || b.avg_sale_price) - b.retail_price) / b.retail_price) : -99
       return pb - pa
     })
     if (sort === 'name') result.sort((a, b) => a.name.localeCompare(b.name))
@@ -119,7 +119,8 @@ export default function BrowsePage() {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '16px' }}>
           {filtered.map(set => {
-            const change = pct(set.retail_price, set.avg_sale_price)
+            const displayPrice = set.new_avg_price || set.avg_sale_price
+            const change = pct(set.retail_price, displayPrice)
             // Show Mega Construx or Mega Bloks in subtitle based on theme
             const subtitle = set.category === 'Mega'
               ? `${set.theme || 'Mega'}`
@@ -171,7 +172,7 @@ export default function BrowsePage() {
                   <div style={{ fontSize: '13px', fontWeight: 800, lineHeight: 1.3, marginBottom: '10px' }}>{set.name}</div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
-                      <div style={{ fontFamily: 'var(--mono)', fontSize: '15px', fontWeight: 500 }}>{fmt(set.avg_sale_price)}</div>
+                      <div style={{ fontFamily: 'var(--mono)', fontSize: '15px', fontWeight: 500 }}>{fmt(displayPrice)}</div>
                       {set.retail_price && <div style={{ fontSize: '10px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>MSRP {fmt(set.retail_price)}</div>}
                     </div>
                     {change !== null && (
