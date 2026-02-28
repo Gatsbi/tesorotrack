@@ -62,7 +62,7 @@ function Footer() {
           </div>
           {[
             { title: 'Categories', links: ['Mega Construx', 'Funko Pop', 'LEGO', 'Browse All'] },
-            { title: 'Tools', links: ['Portfolio Tracker', 'Watchlist', 'Trending', 'Price Alerts'] },
+            { title: 'Tools', links: ['Portfolio Tracker', 'Watchlist', 'Trending', 'Price Alerts', 'Submit a Set'] },
             { title: 'Company', links: ['About', 'How It Works', 'Data Sources', 'Contact'] },
           ].map(col => (
             <div key={col.title}>
