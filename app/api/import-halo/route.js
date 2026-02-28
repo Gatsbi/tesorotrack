@@ -376,14 +376,14 @@ export async function GET(request) {
     return Response.json({ success: true, inserted: 0, skipped: HALO_SETS.length, message: 'All sets already in DB' });
   }
 
-  // Insert in batches of 100
+  // Insert in batches of 100 (plain insert, duplicates already filtered above)
   let inserted = 0;
   const errors = [];
   for (let i = 0; i < toInsert.length; i += 100) {
     const batch = toInsert.slice(i, i + 100);
     const { data, error } = await supabase
       .from('sets')
-      .upsert(batch, { onConflict: 'set_number', ignoreDuplicates: true })
+      .insert(batch)
       .select();
     if (error) errors.push(error.message);
     else inserted += data?.length || batch.length;
