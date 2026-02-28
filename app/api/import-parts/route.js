@@ -86,6 +86,16 @@ export async function GET(request) {
 
   if (!SUPABASE_SERVICE_KEY) return Response.json({ error: 'No service key' }, { status: 500 });
 
+  // Debug: return raw API response for a single minifig to inspect field names
+  if (searchParams.get('debug') === 'true') {
+    const res = await fetch(
+      `https://rebrickable.com/api/v3/lego/minifigs/fig-000003/?key=${REBRICKABLE_KEY}`,
+      { signal: AbortSignal.timeout(10000) }
+    );
+    const data = await res.json();
+    return Response.json({ rawApiResponse: data });
+  }
+
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
   const results = {};
 
