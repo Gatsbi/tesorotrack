@@ -26,7 +26,7 @@ function Footer() {
     {
       title: 'Categories',
       links: [
-        { label: 'Mega Construx', href: '/browse?cat=Mega+Construx' },
+        { label: 'Mega', href: '/browse?cat=Mega' },
         { label: 'Funko Pop', href: '/browse?cat=Funko+Pop' },
         { label: 'LEGO', href: '/browse?cat=LEGO' },
         { label: 'Browse All', href: '/browse' },

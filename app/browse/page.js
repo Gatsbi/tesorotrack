@@ -61,7 +61,7 @@ export default function BrowsePage() {
     if (!retail || !avg) return null
     return Math.round(((avg - retail) / retail) * 100)
   }
-  const catIcon = { 'Mega Construx': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }
+  const catIcon = { 'Mega': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }
 
   const selectStyle = {
     fontFamily: 'var(--sans)', fontSize: '13px', fontWeight: 600,
@@ -71,14 +71,12 @@ export default function BrowsePage() {
 
   return (
     <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '48px 40px' }}>
-      {/* Header */}
       <div style={{ marginBottom: '32px' }}>
         <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--accent)', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '8px' }}>Catalog</div>
         <h1 style={{ fontFamily: 'var(--display)', fontSize: '40px', fontWeight: 900, letterSpacing: '-1.5px', marginBottom: '6px' }}>Browse All Sets</h1>
         <p style={{ fontSize: '15px', color: 'var(--muted)' }}>{filtered.length} sets — sorted by eBay activity</p>
       </div>
 
-      {/* Filters */}
       <div style={{
         display: 'flex', gap: '10px', marginBottom: '32px',
         padding: '16px', background: 'var(--white)', borderRadius: '12px',
@@ -88,7 +86,7 @@ export default function BrowsePage() {
 
         <select value={category} onChange={e => { setCategory(e.target.value); setTheme('All') }} style={selectStyle}>
           <option value="All">All Categories</option>
-          <option value="Mega Construx">Mega Construx</option>
+          <option value="Mega">Mega</option>
           <option value="Funko Pop">Funko Pop</option>
           <option value="LEGO">LEGO</option>
         </select>
@@ -116,13 +114,17 @@ export default function BrowsePage() {
         </div>
       </div>
 
-      {/* Grid */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: '80px', color: 'var(--muted)', fontSize: '15px' }}>Loading sets...</div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '16px' }}>
           {filtered.map(set => {
             const change = pct(set.retail_price, set.avg_sale_price)
+            // Show Mega Construx or Mega Bloks in subtitle based on theme
+            const subtitle = set.category === 'Mega'
+              ? `${set.theme || 'Mega'}`
+              : `${set.category} · ${set.theme}`
+
             return (
               <a key={set.id} href={`/sets/${set.id}`} style={{
                 border: '1.5px solid var(--border)', borderRadius: '14px',
@@ -132,7 +134,6 @@ export default function BrowsePage() {
                 onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.08)'; e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'var(--accent)' }}
                 onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)' }}
               >
-                {/* Image area */}
                 <div style={{
                   height: '140px', background: 'var(--surface)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -140,17 +141,9 @@ export default function BrowsePage() {
                   overflow: 'hidden',
                 }}>
                   {set.image_url ? (
-                    <img
-                      src={set.image_url}
-                      alt={set.name}
-                      style={{
-                        width: '100%', height: '100%',
-                        objectFit: 'contain', padding: '8px',
-                      }}
-                      onError={(e) => {
-                        e.target.style.display = 'none'
-                        e.target.nextSibling.style.display = 'flex'
-                      }}
+                    <img src={set.image_url} alt={set.name}
+                      style={{ width: '100%', height: '100%', objectFit: 'contain', padding: '8px' }}
+                      onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex' }}
                     />
                   ) : null}
                   <div style={{
@@ -170,9 +163,11 @@ export default function BrowsePage() {
                   )}
                 </div>
 
-                {/* Info */}
                 <div style={{ padding: '12px' }}>
-                  <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600, marginBottom: '3px' }}>{set.category} · {set.theme}</div>
+                  <div style={{ fontSize: '10px', color: 'var(--accent)', fontFamily: 'var(--mono)', fontWeight: 600, marginBottom: '2px' }}>
+                    {set.set_number ? `#${set.set_number}` : ''}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600, marginBottom: '3px' }}>{subtitle}</div>
                   <div style={{ fontSize: '13px', fontWeight: 800, lineHeight: 1.3, marginBottom: '10px' }}>{set.name}</div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>

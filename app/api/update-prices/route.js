@@ -36,16 +36,19 @@ async function getEbayToken() {
   }
 }
 
-// Search eBay sold listings for a specific set number
-async function searchBySetNumber(setNumber, categoryName, token) {
-  // Build a tight query: set number + category keyword
+// Build the best eBay search query for a set
+function buildQuery(set) {
   const categoryKeyword = {
     'LEGO': 'LEGO',
-    'Mega Construx': 'Mega Construx',
+    'Mega': set.theme || 'Mega',  // use theme: "Mega Construx", "Mega Bloks" etc
     'Funko Pop': 'Funko Pop',
-  }[categoryName] || categoryName;
+  }[set.category] || set.category
 
-  const query = `${setNumber} ${categoryKeyword}`;
+  return `${set.set_number} ${categoryKeyword}`
+}
+
+async function searchBySetNumber(set, token) {
+  const query = buildQuery(set)
 
   const params = new URLSearchParams({
     q: query,
@@ -85,14 +88,12 @@ function parseItem(item, setId, setNumber) {
 
   const title = (item?.title || '').toLowerCase();
 
-  // Skip junk listings
   const skipKeywords = ['lot of', 'bundle', 'parts only', 'instructions only', 'incomplete', 'custom', 'minifig only', 'minifigure only', 'pieces only'];
   if (skipKeywords.some(kw => title.includes(kw))) return null;
 
-  // Make sure the set number actually appears in the title for confidence
+  // Require set number in title for confidence
   if (setNumber && !title.includes(setNumber.toLowerCase())) return null;
 
-  // Parse condition
   const conditionId = item?.conditionId || '';
   const conditionText = (item?.condition || '').toLowerCase();
   let condition = 'Unknown';
@@ -147,13 +148,11 @@ export async function GET(request) {
 
   if (!SUPABASE_SERVICE_KEY) return Response.json({ error: 'SUPABASE_SERVICE_KEY not set' }, { status: 500 });
 
-  // Token debug
   if (searchParams.get('token') === 'true') {
     const result = await getEbayToken();
     return Response.json({ tokenReceived: !!result.token, error: result.error || null });
   }
 
-  // Get fresh token every run — tokens last 2hrs, no need to cache
   const tokenResult = await getEbayToken();
   if (tokenResult.error) {
     return Response.json({ error: 'eBay token failed', detail: tokenResult.error }, { status: 500 });
@@ -162,21 +161,19 @@ export async function GET(request) {
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-  // Fetch sets that have a set number — only these can be searched accurately
   const { data: allSets, error: setsError } = await supabase
     .from('sets')
     .select('id, name, category, theme, set_number')
     .not('set_number', 'is', null)
     .neq('set_number', '')
     .neq('set_number', '—')
-    .order('last_price_update', { ascending: true, nullsFirst: true }) // prioritize stale sets
+    .order('last_price_update', { ascending: true, nullsFirst: true })
 
   if (setsError || !allSets?.length) {
     return Response.json({ error: 'No sets with set numbers found' }, { status: 500 });
   }
 
-  // Batch: process N sets per run
-  const batchSize = parseInt(searchParams.get('size') || '20')
+  const batchSize = parseInt(searchParams.get('size') || '50')
   const batch = parseInt(searchParams.get('batch') || '0');
   const setsToProcess = allSets.slice(batch * batchSize, (batch + 1) * batchSize);
   const isLastBatch = (batch + 1) * batchSize >= allSets.length;
@@ -190,7 +187,7 @@ export async function GET(request) {
   const log = [];
 
   for (const set of setsToProcess) {
-    const result = await searchBySetNumber(set.set_number, set.category, token);
+    const result = await searchBySetNumber(set, token);
 
     if (result.error) {
       log.push({ set: set.name, setNumber: set.set_number, error: result.error });
@@ -218,14 +215,15 @@ export async function GET(request) {
     log.push({
       set: set.name,
       setNumber: set.set_number,
+      category: set.category,
+      theme: set.theme,
       ebayTotal: result.total,
       matched: prices.length,
     });
 
-    await sleep(300); // be nice to eBay API
+    await sleep(300);
   }
 
-  // Update avg prices for all sets we got data for
   if (updatedSetIds.length > 0) {
     await updateAverages(supabase, updatedSetIds);
   }
