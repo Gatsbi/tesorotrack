@@ -90,7 +90,7 @@ function findSetNumbersInTitle(title) {
   return matches;
 }
 
-function parseItem(item, setId, setNumber, category) {
+function parseItem(item, setId, setNumber, category, knownPartIds = null) {
   const price = parseFloat(item?.price?.value || 0);
   if (price <= 0 || price > 5000) return null;
 
@@ -119,10 +119,18 @@ function parseItem(item, setId, setNumber, category) {
   const minifigPattern = /\bminifig(ure)?s?\b|\bmini[- ]?fig(ure)?s?\b|\bfigure only\b|\bfrom set\b/i;
   if (minifigPattern.test(title)) return null;
 
-  // Catch BrickLink-style part IDs (2-4 letters + 3-5 digits, e.g. sw1088, hp0234, cas456)
-  // If a part ID appears in the title alongside the set number, it's a parts listing
-  const partIdPattern = /\b[a-z]{2,4}\d{3,5}\b/i;
-  if (partIdPattern.test(title)) return null;
+  // Check title for known LEGO part/minifig IDs — only applies to LEGO sets
+  // knownPartIds is a Set of lowercase part numbers loaded from lego_parts before the loop
+  if (category === 'LEGO') {
+    if (knownPartIds && knownPartIds.size > 0) {
+      const titleTokens = title.match(/\b[a-z]{1,4}\d{2,6}\b/gi) || [];
+      if (titleTokens.some(t => knownPartIds.has(t.toLowerCase()))) return null;
+    } else {
+      // Fallback if DB lookup failed: generic part ID pattern
+      const partIdPattern = /\b[a-z]{2,4}\d{3,5}\b/i;
+      if (partIdPattern.test(title)) return null;
+    }
+  }
 
 
   // Require set number in title — must not be embedded inside a larger number
@@ -235,12 +243,12 @@ export async function GET(request) {
   if (singleSetId) {
     ({ data: allSets, error: setsError } = await supabase
       .from('sets')
-      .select('id, name, category, theme, set_number, image_url')
+      .select('id, name, category, theme, set_number, image_url, minifig_ids')
       .eq('id', singleSetId));
   } else {
     ({ data: allSets, error: setsError } = await supabase
       .from('sets')
-      .select('id, name, category, theme, set_number, image_url')
+      .select('id, name, category, theme, set_number, image_url, minifig_ids')
       .not('set_number', 'is', null)
       .neq('set_number', '')
       .neq('set_number', '—')
@@ -258,6 +266,18 @@ export async function GET(request) {
 
   if (setsToProcess.length === 0) {
     return Response.json({ done: true, message: 'All sets processed' });
+  }
+
+  // Load known LEGO part/minifig IDs for title filtering
+  let knownPartIds = null;
+  if (setsToProcess.some(s => s.category === 'LEGO')) {
+    const { data: partsData } = await supabase
+      .from('lego_parts')
+      .select('part_num')
+      .limit(200000);
+    if (partsData?.length) {
+      knownPartIds = new Set(partsData.map(p => p.part_num.toLowerCase()));
+    }
   }
 
   let totalSaved = 0;
@@ -291,7 +311,7 @@ export async function GET(request) {
     let skippedMultiSet = 0;
     let skippedKeyword = 0;
     for (const item of result.items) {
-      const price = parseItem(item, set.id, set.set_number, set.category);
+      const price = parseItem(item, set.id, set.set_number, set.category, knownPartIds);
       if (!price) {
         // Count multi-set skips separately for logging
         const foundNumbers = findSetNumbersInTitle(item?.title || '');
