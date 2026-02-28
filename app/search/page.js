@@ -1,41 +1,55 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 
 export default function SearchPage() {
-  const [query, setQuery] = useState('')
+  const [input, setInput] = useState('')
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(false)
   const [searched, setSearched] = useState(false)
-  const [input, setInput] = useState('')
+  const [total, setTotal] = useState(0)
+  const debounceRef = useRef(null)
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const q = params.get('q') || ''
-    setInput(q)
-    if (q) { setQuery(q); doSearch(q) }
+    if (q) { setInput(q); doSearch(q) }
   }, [])
+
+  // Live search — debounced 300ms
+  useEffect(() => {
+    if (!input.trim()) { setResults([]); setSearched(false); return }
+    clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      doSearch(input.trim())
+      window.history.replaceState({}, '', `/search?q=${encodeURIComponent(input.trim())}`)
+    }, 300)
+    return () => clearTimeout(debounceRef.current)
+  }, [input])
 
   async function doSearch(q) {
     if (!q.trim()) return
     setLoading(true)
     setSearched(true)
+
+    const { count } = await supabase
+      .from('sets')
+      .select('*', { count: 'exact', head: true })
+      .or(`name.ilike.%${q}%,theme.ilike.%${q}%,set_number.ilike.%${q}%,category.ilike.%${q}%`)
+
     const { data } = await supabase
       .from('sets')
-      .select('id, name, set_number, category, theme, retail_price, avg_sale_price, total_sales, is_retired, image_url')
+      .select('id, name, set_number, category, theme, retail_price, avg_sale_price, new_avg_price, total_sales, is_retired, image_url')
       .or(`name.ilike.%${q}%,theme.ilike.%${q}%,set_number.ilike.%${q}%,category.ilike.%${q}%`)
       .order('total_sales', { ascending: false, nullsFirst: false })
-      .limit(60)
+      .limit(500)
+
+    setTotal(count || 0)
     setResults(data || [])
     setLoading(false)
   }
 
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    setQuery(input)
-    doSearch(input)
-    window.history.pushState({}, '', `/search?q=${encodeURIComponent(input)}`)
-  }
+  const handleSubmit = (e) => { e.preventDefault(); doSearch(input) }
 
   const fmt = (n) => n ? `$${parseFloat(n).toFixed(2)}` : '—'
   const pct = (retail, avg) => {
@@ -45,7 +59,8 @@ export default function SearchPage() {
   const catIcon = { 'Mega Construx': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }
 
   const SetCard = ({ set }) => {
-    const change = pct(set.retail_price, set.avg_sale_price)
+    const displayPrice = set.new_avg_price || set.avg_sale_price
+    const change = pct(set.retail_price, displayPrice)
     return (
       <a href={`/sets/${set.id}`} style={{
         border: '1.5px solid var(--border)', borderRadius: '14px',
@@ -78,7 +93,6 @@ export default function SearchPage() {
           )}
         </div>
         <div style={{ padding: '12px' }}>
-          {/* Set number first, then name */}
           {set.set_number && (
             <div style={{ fontFamily: 'var(--mono)', fontSize: '10px', fontWeight: 700, color: 'var(--accent)', marginBottom: '2px', letterSpacing: '0.5px' }}>
               #{set.set_number}
@@ -88,7 +102,7 @@ export default function SearchPage() {
           <div style={{ fontSize: '13px', fontWeight: 800, lineHeight: 1.3, marginBottom: '10px' }}>{set.name}</div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: '15px', fontWeight: 500 }}>{fmt(set.avg_sale_price)}</div>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: '15px', fontWeight: 500 }}>{fmt(displayPrice)}</div>
               {set.retail_price && <div style={{ fontSize: '10px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>MSRP {fmt(set.retail_price)}</div>}
             </div>
             {change !== null && (
@@ -99,7 +113,7 @@ export default function SearchPage() {
               }}>{change >= 0 ? '+' : ''}{change}%</span>
             )}
           </div>
-          {set.total_sales && (
+          {set.total_sales > 0 && (
             <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '6px' }}>{set.total_sales} recent sales</div>
           )}
         </div>
@@ -112,16 +126,21 @@ export default function SearchPage() {
       <div style={{ marginBottom: '40px' }}>
         <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--accent)', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '8px' }}>Search</div>
         <h1 style={{ fontFamily: 'var(--display)', fontSize: '40px', fontWeight: 900, letterSpacing: '-1.5px', marginBottom: '24px' }}>
-          {searched ? `Results for "${query}"` : 'Search Sets'}
+          {searched && input ? `Results for "${input}"` : 'Search Sets'}
         </h1>
         <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '10px', maxWidth: '600px' }}>
-          <input type="text" placeholder="Search by name, theme, or set number..."
-            value={input} onChange={e => setInput(e.target.value)}
+          <input
+            type="text"
+            placeholder="Search by name, theme, or set number..."
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            autoFocus
             style={{
               flex: 1, padding: '14px 18px', borderRadius: '10px',
               border: '1.5px solid var(--border)', fontFamily: 'var(--sans)',
               fontSize: '15px', fontWeight: 500, outline: 'none', background: 'var(--white)',
-            }}/>
+            }}
+          />
           <button type="submit" style={{
             background: 'var(--accent)', color: 'white', border: 'none',
             padding: '14px 24px', borderRadius: '10px', fontFamily: 'var(--sans)',
@@ -130,12 +149,14 @@ export default function SearchPage() {
         </form>
       </div>
 
-      {loading && <div style={{ textAlign: 'center', padding: '80px', color: 'var(--muted)', fontSize: '15px' }}>Searching...</div>}
+      {loading && (
+        <div style={{ textAlign: 'center', padding: '80px', color: 'var(--muted)', fontSize: '15px' }}>Searching...</div>
+      )}
 
       {!loading && searched && results.length === 0 && (
         <div style={{ textAlign: 'center', padding: '80px 40px' }}>
           <div style={{ fontSize: '48px', marginBottom: '16px' }}>🔍</div>
-          <h2 style={{ fontFamily: 'var(--display)', fontSize: '24px', fontWeight: 900, marginBottom: '8px' }}>No results for "{query}"</h2>
+          <h2 style={{ fontFamily: 'var(--display)', fontSize: '24px', fontWeight: 900, marginBottom: '8px' }}>No results for "{input}"</h2>
           <p style={{ color: 'var(--muted)', fontSize: '15px', marginBottom: '24px' }}>Try a shorter search term or browse by category.</p>
           <a href="/browse" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Browse all sets →</a>
         </div>
@@ -143,7 +164,9 @@ export default function SearchPage() {
 
       {!loading && results.length > 0 && (
         <>
-          <p style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '24px' }}>{results.length} result{results.length !== 1 ? 's' : ''} found</p>
+          <p style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '24px' }}>
+            {total} result{total !== 1 ? 's' : ''} found{total > 500 ? ' — showing top 500' : ''}
+          </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '16px' }}>
             {results.map(set => <SetCard key={set.id} set={set} />)}
           </div>
@@ -155,7 +178,7 @@ export default function SearchPage() {
           <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '16px' }}>Popular searches</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
             {['Halo Warthog', 'Pokémon Charizard', 'LEGO Millennium Falcon', 'Funko Grogu', 'Castle Grayskull', 'Bugatti Chiron', 'Hogwarts Castle', 'Darth Vader'].map(term => (
-              <button key={term} onClick={() => { setInput(term); setQuery(term); doSearch(term); window.history.pushState({}, '', `/search?q=${encodeURIComponent(term)}`) }}
+              <button key={term} onClick={() => setInput(term)}
                 style={{
                   background: 'var(--white)', border: '1.5px solid var(--border)', borderRadius: '8px',
                   padding: '8px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', color: 'var(--text)',
