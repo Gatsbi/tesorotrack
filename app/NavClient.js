@@ -17,12 +17,13 @@ export default function NavClient() {
   }
 
   const navLinks = [
-    { href: '/browse', label: 'Browse' },
-    { href: '/marketplace', label: 'Marketplace' },
-    { href: '/parts', label: 'Parts Exchange' },
-    { href: '/trending', label: 'Trending' },
-    { href: '/about', label: 'About' },
-  ]
+  { href: '/browse', label: 'Browse' },
+  { href: '/marketplace', label: 'Marketplace' },
+  { href: '/parts', label: 'Parts Exchange' },
+  { href: '/trending', label: 'Trending' },
+  { href: '/leaderboard', label: '🏆 Leaderboard' },
+  { href: '/about', label: 'About' },
+]
 
   return (
     <>
