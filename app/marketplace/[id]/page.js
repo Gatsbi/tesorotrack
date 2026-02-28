@@ -10,6 +10,7 @@ export default function ListingPage({ params }) {
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [sent, setSent] = useState(false)
   const [conversation, setConversation] = useState(null)
   const [messages, setMessages] = useState([])
@@ -98,6 +99,19 @@ export default function ListingPage({ params }) {
     setSent(true)
     loadMessages(convId)
     setSending(false)
+  }
+
+  async function deleteListing() {
+    if (!confirm('Are you sure you want to delete this listing? This cannot be undone.')) return
+    setDeleting(true)
+    await supabase.from('listings').delete().eq('id', listing.id)
+    window.location.href = '/marketplace'
+  }
+
+  async function markSold() {
+    if (!confirm('Mark this listing as sold?')) return
+    await supabase.from('listings').update({ status: 'sold' }).eq('id', listing.id)
+    setListing({ ...listing, status: 'sold' })
   }
 
   const fmt = (n) => n ? `$${parseFloat(n).toFixed(2)}` : '—'
@@ -198,8 +212,22 @@ export default function ListingPage({ params }) {
             )}
 
             {isSeller ? (
-              <div style={{ padding: '12px', borderRadius: '10px', background: 'var(--surface)', color: 'var(--muted)', fontWeight: 700, fontSize: '13px', textAlign: 'center' }}>
-                This is your listing
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ padding: '10px 12px', borderRadius: '10px', background: 'var(--surface)', color: 'var(--muted)', fontWeight: 700, fontSize: '12px', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Your Listing
+                </div>
+                {listing.status !== 'sold' && (
+                  <button onClick={markSold} style={{
+                    width: '100%', padding: '12px', borderRadius: '10px', border: '1.5px solid var(--green)',
+                    background: 'var(--green-light)', color: 'var(--green)',
+                    fontSize: '14px', fontWeight: 700, cursor: 'pointer',
+                  }}>✓ Mark as Sold</button>
+                )}
+                <button onClick={deleteListing} disabled={deleting} style={{
+                  width: '100%', padding: '12px', borderRadius: '10px', border: '1.5px solid var(--red)',
+                  background: 'var(--red-light)', color: 'var(--red)',
+                  fontSize: '14px', fontWeight: 700, cursor: deleting ? 'default' : 'pointer', opacity: deleting ? 0.6 : 1,
+                }}>{deleting ? 'Deleting...' : '🗑 Delete Listing'}</button>
               </div>
             ) : listing.status === 'active' && (
               <div>
