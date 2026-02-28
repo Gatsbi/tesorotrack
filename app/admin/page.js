@@ -4,6 +4,7 @@ import { supabase } from '../supabase'
 import { useAuth } from '../AuthProvider'
 
 const BATCH_SIZE = 50
+const STORAGE_KEY = 'tt_price_update_progress'
 
 export default function AdminPage() {
   const { user, loading: authLoading } = useAuth()
@@ -26,6 +27,7 @@ export default function AdminPage() {
   const [priceLog, setPriceLog] = useState([])
   const [startTime, setStartTime] = useState(null)
   const [elapsed, setElapsed] = useState(0)
+  const [savedProgress, setSavedProgress] = useState(null) // resumed state
   const stopRef = useRef(false)
   const logEndRef = useRef(null)
 
@@ -34,6 +36,23 @@ export default function AdminPage() {
     if (!user) { window.location.href = '/login'; return }
     checkAdmin()
   }, [user, authLoading])
+
+  // Load saved progress on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        // Only show resume if it's incomplete and less than 24hrs old
+        const age = Date.now() - (parsed.savedAt || 0)
+        if (!parsed.done && age < 24 * 60 * 60 * 1000) {
+          setSavedProgress(parsed)
+        } else if (parsed.done) {
+          localStorage.removeItem(STORAGE_KEY)
+        }
+      }
+    } catch (e) {}
+  }, [])
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -44,6 +63,24 @@ export default function AdminPage() {
     const interval = setInterval(() => setElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000)
     return () => clearInterval(interval)
   }, [running, startTime])
+
+  function saveProgress(batch, totalBatches, saved, updated, done = false) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        batch,
+        totalBatches,
+        totalSaved: saved,
+        totalUpdated: updated,
+        done,
+        savedAt: Date.now(),
+      }))
+    } catch (e) {}
+  }
+
+  function clearProgress() {
+    try { localStorage.removeItem(STORAGE_KEY) } catch (e) {}
+    setSavedProgress(null)
+  }
 
   async function checkAdmin() {
     const { data } = await supabase.from('profiles').select('is_admin').eq('id', user.id).single()
@@ -80,33 +117,42 @@ export default function AdminPage() {
     setListings(listings.map(l => l.id === id ? { ...l, status: 'removed' } : l))
   }
 
-  // Price update functions
   function addLog(msg, type = 'info') {
     const time = new Date().toLocaleTimeString()
     setPriceLog(prev => [...prev, { time, msg, type }])
   }
 
-  async function runAll() {
+  async function runAll(resumeFrom = 0, resumeTotals = { saved: 0, updated: 0 }) {
     stopRef.current = false
     setRunning(true)
     setDone(false)
-    setPriceLog([])
-    setTotalSaved(0)
-    setTotalUpdated(0)
-    setCurrentBatch(0)
-    setTotalBatches(null)
+    if (resumeFrom === 0) setPriceLog([])
+    setTotalSaved(resumeTotals.saved)
+    setTotalUpdated(resumeTotals.updated)
+    setCurrentBatch(resumeFrom)
     setStartTime(Date.now())
     setElapsed(0)
+    setSavedProgress(null)
 
-    addLog(`Starting price update — batch size: ${BATCH_SIZE}`, 'info')
+    if (resumeFrom > 0) {
+      addLog(`▶ Resuming from batch ${resumeFrom + 1}...`, 'info')
+    } else {
+      addLog(`Starting price update — batch size: ${BATCH_SIZE}`, 'info')
+    }
 
-    let batch = 0
-    let grandTotalSaved = 0
-    let grandTotalUpdated = 0
-    let knownTotalBatches = null
+    let batch = resumeFrom
+    let grandTotalSaved = resumeTotals.saved
+    let grandTotalUpdated = resumeTotals.updated
+    let knownTotalBatches = savedProgress?.totalBatches || null
+    if (knownTotalBatches) setTotalBatches(knownTotalBatches)
 
     while (true) {
-      if (stopRef.current) { addLog('⏹ Stopped by user', 'warn'); break }
+      if (stopRef.current) {
+        addLog('⏹ Stopped — progress saved. Come back and hit Resume to continue.', 'warn')
+        saveProgress(batch, knownTotalBatches, grandTotalSaved, grandTotalUpdated, false)
+        setSavedProgress({ batch, totalBatches: knownTotalBatches, totalSaved: grandTotalSaved, totalUpdated: grandTotalUpdated, done: false, savedAt: Date.now() })
+        break
+      }
 
       setCurrentBatch(batch)
       addLog(`Running batch ${batch + 1}${knownTotalBatches ? ` of ${knownTotalBatches}` : ''}...`, 'info')
@@ -117,11 +163,23 @@ export default function AdminPage() {
         data = await res.json()
       } catch (e) {
         addLog(`❌ Batch ${batch + 1} failed: ${e.message}`, 'error')
+        saveProgress(batch, knownTotalBatches, grandTotalSaved, grandTotalUpdated, false)
+        setSavedProgress({ batch, totalBatches: knownTotalBatches, totalSaved: grandTotalSaved, totalUpdated: grandTotalUpdated, done: false, savedAt: Date.now() })
         break
       }
 
-      if (data.error) { addLog(`❌ Error: ${data.error} — ${data.detail || ''}`, 'error'); break }
-      if (data.done) { addLog('✅ All batches complete!', 'success'); break }
+      if (data.error) {
+        addLog(`❌ Error: ${data.error} — ${data.detail || ''}`, 'error')
+        saveProgress(batch, knownTotalBatches, grandTotalSaved, grandTotalUpdated, false)
+        break
+      }
+
+      if (data.done) {
+        addLog('✅ All batches complete!', 'success')
+        saveProgress(batch, knownTotalBatches, grandTotalSaved, grandTotalUpdated, true)
+        clearProgress()
+        break
+      }
 
       grandTotalSaved += data.pricesSaved || 0
       grandTotalUpdated += data.setsUpdated || 0
@@ -132,6 +190,9 @@ export default function AdminPage() {
         knownTotalBatches = Math.ceil(data.totalSetsWithNumbers / BATCH_SIZE)
         setTotalBatches(knownTotalBatches)
       }
+
+      // Save progress after every batch
+      saveProgress(batch, knownTotalBatches, grandTotalSaved, grandTotalUpdated, false)
 
       for (const entry of data.log || []) {
         if (entry.error) {
@@ -147,6 +208,7 @@ export default function AdminPage() {
 
       if (data.isLastBatch) {
         addLog(`✅ All done! Total: ${grandTotalSaved} prices saved across ${grandTotalUpdated} sets`, 'success')
+        clearProgress()
         break
       }
 
@@ -159,6 +221,7 @@ export default function AdminPage() {
   }
 
   const fmtTime = (s) => { const m = Math.floor(s / 60); return m > 0 ? `${m}m ${s % 60}s` : `${s}s` }
+  const fmtDate = (ts) => ts ? new Date(ts).toLocaleString() : '—'
   const progress = totalBatches ? Math.min(100, Math.round(((currentBatch + 1) / totalBatches) * 100)) : 0
 
   const tabStyle = (t) => ({ padding: '10px 20px', borderRadius: '8px', border: 'none', fontFamily: 'var(--sans)', fontSize: '14px', fontWeight: 700, cursor: 'pointer', background: tab === t ? 'var(--accent)' : 'transparent', color: tab === t ? 'white' : 'var(--muted)' })
@@ -175,7 +238,6 @@ export default function AdminPage() {
         <h1 style={{ fontFamily: 'var(--display)', fontSize: '36px', fontWeight: 900, letterSpacing: '-1px' }}>Dashboard</h1>
       </div>
 
-      {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '32px' }}>
         {[
           { label: 'Pending Submissions', value: stats.pending, color: 'var(--yellow)', urgent: stats.pending > 0 },
@@ -190,7 +252,6 @@ export default function AdminPage() {
         ))}
       </div>
 
-      {/* Tabs */}
       <div style={{ display: 'flex', gap: '4px', marginBottom: '24px', background: 'var(--surface)', borderRadius: '10px', padding: '4px', width: 'fit-content' }}>
         {[
           ['submissions', `Submissions (${stats.pending} pending)`],
@@ -202,7 +263,6 @@ export default function AdminPage() {
         ))}
       </div>
 
-      {/* Submissions tab */}
       {tab === 'submissions' && (
         <div style={{ display: 'grid', gap: '12px' }}>
           {submissions.length === 0 && <div style={{ textAlign: 'center', padding: '60px', background: 'var(--white)', borderRadius: '16px', border: '1.5px solid var(--border)', color: 'var(--muted)' }}>No submissions yet</div>}
@@ -237,7 +297,6 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* Listings tab */}
       {tab === 'listings' && (
         <div style={{ background: 'var(--white)', borderRadius: '14px', border: '1.5px solid var(--border)', overflow: 'hidden' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 80px', padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
@@ -258,7 +317,6 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* Users tab */}
       {tab === 'users' && (
         <div style={{ background: 'var(--white)', borderRadius: '14px', border: '1.5px solid var(--border)', overflow: 'hidden' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 80px', padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
@@ -277,13 +335,32 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* Price Update tab */}
       {tab === 'prices' && (
         <div>
-          {/* Stats row */}
+          {/* Resume banner */}
+          {savedProgress && !running && (
+            <div style={{ marginBottom: '20px', padding: '16px 20px', borderRadius: '12px', background: 'rgba(200,82,42,0.08)', border: '1.5px solid var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '4px' }}>⏸ Interrupted run detected</div>
+                <div style={{ fontSize: '13px', color: 'var(--muted)' }}>
+                  Stopped at batch {savedProgress.batch + 1}{savedProgress.totalBatches ? ` of ${savedProgress.totalBatches}` : ''} · {savedProgress.totalSaved?.toLocaleString()} prices saved · {fmtDate(savedProgress.savedAt)}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                <button onClick={() => runAll(savedProgress.batch, { saved: savedProgress.totalSaved || 0, updated: savedProgress.totalUpdated || 0 })} style={{
+                  padding: '10px 20px', borderRadius: '8px', border: 'none', background: 'var(--accent)', color: 'white', fontSize: '13px', fontWeight: 700, cursor: 'pointer'
+                }}>▶ Resume</button>
+                <button onClick={clearProgress} style={{
+                  padding: '10px 16px', borderRadius: '8px', border: '1.5px solid var(--border)', background: 'transparent', fontSize: '13px', fontWeight: 700, cursor: 'pointer', color: 'var(--muted)'
+                }}>Discard</button>
+              </div>
+            </div>
+          )}
+
+          {/* Stats */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
             {[
-              { label: 'Status', value: running ? '🟡 Running' : done ? '✅ Done' : '⚪ Ready' },
+              { label: 'Status', value: running ? '🟡 Running' : done ? '✅ Done' : savedProgress ? '⏸ Paused' : '⚪ Ready' },
               { label: 'Batch', value: totalBatches ? `${currentBatch + 1} / ${totalBatches}` : '—' },
               { label: 'Prices Saved', value: totalSaved.toLocaleString() },
               { label: 'Elapsed', value: running || done ? fmtTime(elapsed) : '—' },
@@ -309,15 +386,17 @@ export default function AdminPage() {
 
           {/* Buttons */}
           <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
-            <button onClick={runAll} disabled={running} style={{
-              padding: '12px 28px', borderRadius: '10px', border: 'none',
-              background: running ? 'var(--border)' : 'var(--accent)',
-              color: running ? 'var(--muted)' : 'white',
-              fontSize: '14px', fontWeight: 700, cursor: running ? 'default' : 'pointer',
-              boxShadow: running ? 'none' : '0 4px 14px rgba(200,82,42,0.3)',
-            }}>
-              {running ? '⏳ Running...' : done ? '🔄 Run Again' : '▶ Run Price Update'}
-            </button>
+            {!savedProgress && (
+              <button onClick={() => runAll(0, { saved: 0, updated: 0 })} disabled={running} style={{
+                padding: '12px 28px', borderRadius: '10px', border: 'none',
+                background: running ? 'var(--border)' : 'var(--accent)',
+                color: running ? 'var(--muted)' : 'white',
+                fontSize: '14px', fontWeight: 700, cursor: running ? 'default' : 'pointer',
+                boxShadow: running ? 'none' : '0 4px 14px rgba(200,82,42,0.3)',
+              }}>
+                {running ? '⏳ Running...' : done ? '🔄 Run Again' : '▶ Run Price Update'}
+              </button>
+            )}
             {running && (
               <button onClick={() => { stopRef.current = true }} style={{ padding: '12px 20px', borderRadius: '10px', border: '1.5px solid var(--border)', background: 'transparent', fontSize: '14px', fontWeight: 700, cursor: 'pointer', color: 'var(--muted)' }}>
                 ⏹ Stop
@@ -344,7 +423,7 @@ export default function AdminPage() {
           )}
 
           <div style={{ marginTop: '20px', padding: '16px 20px', borderRadius: '12px', background: 'var(--surface)', border: '1.5px solid var(--border)', fontSize: '13px', color: 'var(--muted)', lineHeight: 1.7 }}>
-            <strong style={{ color: 'var(--text)' }}>How it works:</strong> Searches eBay for each set by set number directly, saves matching listings, then recalculates avg_sale_price based on last 90 days. Processes {BATCH_SIZE} sets per batch. Keep this tab open while running.
+            <strong style={{ color: 'var(--text)' }}>How it works:</strong> Searches eBay for each set by set number, saves matching listings, then recalculates avg_sale_price based on last 90 days. Processes {BATCH_SIZE} sets per batch. Progress is saved automatically — if you close the tab you can resume where you left off within 24 hours.
           </div>
         </div>
       )}
