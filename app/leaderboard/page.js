@@ -5,60 +5,60 @@ import { supabase } from '../supabase'
 export default function LeaderboardPage() {
   const [leaders, setLeaders] = useState([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState('value') // value | items | gain
+  const [tab, setTab] = useState('value')
 
   useEffect(() => { loadLeaderboard() }, [])
 
   async function loadLeaderboard() {
     setLoading(true)
 
-    // Get all public portfolios with set data
-    const { data: portfolioData, error } = await supabase
-      .from('portfolios')
-      .select(`
-        user_id, quantity, price_paid,
-        sets(avg_sale_price)
-      `)
-
-    if (error) { console.error(error); setLoading(false); return }
-
-    // Get all public profiles
-    const { data: profileData } = await supabase
+    // Get all public profiles first
+    const { data: profileData, error: profileError } = await supabase
       .from('profiles')
       .select('id, username, display_name, location, portfolio_public, member_since')
       .eq('portfolio_public', true)
 
-    if (!profileData) { setLoading(false); return }
+    if (profileError || !profileData || profileData.length === 0) {
+      console.error('Profile error:', profileError)
+      setLoading(false)
+      return
+    }
 
-    // Build a map of public user IDs
-    const publicUserIds = new Set(profileData.map(p => p.id))
+    const publicUserIds = profileData.map(p => p.id)
 
-    // Aggregate portfolio stats per user (only public users)
+    // Get portfolios for public users only
+    const { data: portfolioData, error: portError } = await supabase
+      .from('portfolios')
+      .select('user_id, quantity, price_paid, sets(avg_sale_price)')
+      .in('user_id', publicUserIds)
+
+    if (portError) console.error('Portfolio error:', portError)
+
+    // Aggregate stats per user
     const userStats = {}
     for (const item of portfolioData || []) {
-      if (!publicUserIds.has(item.user_id)) continue
       if (!userStats[item.user_id]) {
         userStats[item.user_id] = { totalValue: 0, totalInvested: 0, totalItems: 0 }
       }
-      const val = (item.sets?.avg_sale_price || 0) * item.quantity
-      const paid = (item.price_paid || 0) * item.quantity
+      const val = (item.sets?.avg_sale_price || 0) * (item.quantity || 1)
+      const paid = (item.price_paid || 0) * (item.quantity || 1)
       userStats[item.user_id].totalValue += val
       userStats[item.user_id].totalInvested += paid
-      userStats[item.user_id].totalItems += item.quantity
+      userStats[item.user_id].totalItems += (item.quantity || 1)
     }
 
-    // Merge with profiles
-    const merged = profileData
-      .filter(p => userStats[p.id])
-      .map(p => ({
+    // Merge — include ALL public profiles even if portfolio is empty
+    const merged = profileData.map(p => {
+      const stats = userStats[p.id] || { totalValue: 0, totalInvested: 0, totalItems: 0 }
+      return {
         ...p,
-        ...userStats[p.id],
-        totalGain: (userStats[p.id]?.totalValue || 0) - (userStats[p.id]?.totalInvested || 0),
-        gainPct: userStats[p.id]?.totalInvested > 0
-          ? (((userStats[p.id].totalValue - userStats[p.id].totalInvested) / userStats[p.id].totalInvested) * 100).toFixed(1)
-          : 0,
-      }))
-      .filter(u => u.totalValue > 0)
+        ...stats,
+        totalGain: stats.totalValue - stats.totalInvested,
+        gainPct: stats.totalInvested > 0
+          ? (((stats.totalValue - stats.totalInvested) / stats.totalInvested) * 100).toFixed(1)
+          : '0',
+      }
+    })
 
     setLeaders(merged)
     setLoading(false)
@@ -72,7 +72,6 @@ export default function LeaderboardPage() {
   })
 
   const fmt = (n) => `$${parseFloat(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-
   const medals = ['🥇', '🥈', '🥉']
 
   const tabStyle = (t) => ({
@@ -91,7 +90,6 @@ export default function LeaderboardPage() {
         <p style={{ fontSize: '15px', color: 'var(--muted)' }}>Top collectors ranked by portfolio value. Only public portfolios appear here.</p>
       </div>
 
-      {/* Tabs */}
       <div style={{ display: 'flex', gap: '4px', marginBottom: '32px', background: 'var(--surface)', borderRadius: '10px', padding: '4px', width: 'fit-content' }}>
         <button onClick={() => setTab('value')} style={tabStyle('value')}>Portfolio Value</button>
         <button onClick={() => setTab('items')} style={tabStyle('items')}>Most Items</button>
@@ -109,32 +107,32 @@ export default function LeaderboardPage() {
         </div>
       ) : (
         <>
-          {/* Top 3 podium */}
-          {sorted.length >= 3 && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '32px' }}>
-              {[sorted[1], sorted[0], sorted[2]].map((user, podiumIndex) => {
+          {sorted.length >= 2 && (
+            <div style={{ display: 'grid', gridTemplateColumns: sorted.length >= 3 ? '1fr 1fr 1fr' : '1fr 1fr', gap: '12px', marginBottom: '32px' }}>
+              {(sorted.length >= 3 ? [sorted[1], sorted[0], sorted[2]] : [sorted[0], sorted[1]]).map((user, podiumIndex) => {
                 if (!user) return <div key={podiumIndex} />
-                const rank = podiumIndex === 1 ? 0 : podiumIndex === 0 ? 1 : 2
-                const heights = ['160px', '200px', '140px']
+                const rank = sorted.length >= 3
+                  ? (podiumIndex === 1 ? 0 : podiumIndex === 0 ? 1 : 2)
+                  : podiumIndex
                 return (
-                  <a key={user.id} href={`/u/${user.username}`} style={{
+                  <a key={user.id} href={user.username ? `/u/${user.username}` : '#'} style={{
                     textDecoration: 'none', color: 'inherit',
                     background: rank === 0 ? 'var(--accent)' : 'var(--white)',
                     border: `1.5px solid ${rank === 0 ? 'var(--accent)' : 'var(--border)'}`,
                     borderRadius: '16px', padding: '24px 20px', textAlign: 'center',
                     display: 'flex', flexDirection: 'column', alignItems: 'center',
-                    justifyContent: 'flex-end', minHeight: heights[podiumIndex],
+                    justifyContent: 'flex-end', minHeight: rank === 0 ? '200px' : '160px',
                     transition: 'transform 0.2s',
                   }}
                     onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
                     onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
                   >
                     <div style={{ fontSize: '32px', marginBottom: '8px' }}>{medals[rank]}</div>
-                    <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: rank === 0 ? 'rgba(255,255,255,0.2)' : 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--display)', fontSize: '20px', fontWeight: 900, color: 'white', marginBottom: '10px' }}>
+                    <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: rank === 0 ? 'rgba(255,255,255,0.25)' : 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--display)', fontSize: '20px', fontWeight: 900, color: 'white', marginBottom: '10px' }}>
                       {(user.display_name || user.username || 'U')[0].toUpperCase()}
                     </div>
                     <div style={{ fontWeight: 800, fontSize: '15px', color: rank === 0 ? 'white' : 'var(--text)', marginBottom: '2px' }}>
-                      {user.display_name || user.username}
+                      {user.display_name || user.username || 'Collector'}
                     </div>
                     {user.username && (
                       <div style={{ fontSize: '11px', color: rank === 0 ? 'rgba(255,255,255,0.7)' : 'var(--muted)', marginBottom: '10px' }}>@{user.username}</div>
@@ -142,11 +140,9 @@ export default function LeaderboardPage() {
                     <div style={{ fontFamily: 'var(--mono)', fontSize: '18px', fontWeight: 600, color: rank === 0 ? 'white' : 'var(--text)' }}>
                       {tab === 'value' ? fmt(user.totalValue) : tab === 'items' ? `${user.totalItems} items` : fmt(user.totalGain)}
                     </div>
-                    {tab !== 'items' && (
-                      <div style={{ fontSize: '11px', color: rank === 0 ? 'rgba(255,255,255,0.6)' : 'var(--muted)', marginTop: '2px' }}>
-                        {tab === 'value' ? `${user.totalItems} items` : `${user.gainPct}% return`}
-                      </div>
-                    )}
+                    <div style={{ fontSize: '11px', color: rank === 0 ? 'rgba(255,255,255,0.6)' : 'var(--muted)', marginTop: '2px' }}>
+                      {tab === 'value' ? `${user.totalItems} items` : tab === 'items' ? fmt(user.totalValue) : `${user.gainPct}% return`}
+                    </div>
                   </a>
                 )
               })}
@@ -155,14 +151,14 @@ export default function LeaderboardPage() {
 
           {/* Full ranked list */}
           <div style={{ background: 'var(--white)', borderRadius: '16px', border: '1.5px solid var(--border)', overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '48px 1fr 120px 120px 120px', padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
-              {['#', 'Collector', 'Portfolio Value', 'Items', 'Total Gain'].map(h => (
+            <div style={{ display: 'grid', gridTemplateColumns: '48px 1fr 130px 90px 130px', padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
+              {['#', 'Collector', 'Port. Value', 'Items', 'Total Gain'].map(h => (
                 <div key={h} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}</div>
               ))}
             </div>
             {sorted.map((user, i) => (
               <a key={user.id} href={user.username ? `/u/${user.username}` : '#'} style={{
-                display: 'grid', gridTemplateColumns: '48px 1fr 120px 120px 120px',
+                display: 'grid', gridTemplateColumns: '48px 1fr 130px 90px 130px',
                 padding: '14px 20px', borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none',
                 background: i % 2 === 0 ? 'var(--white)' : 'var(--bg)',
                 textDecoration: 'none', color: 'inherit', alignItems: 'center',
@@ -186,9 +182,9 @@ export default function LeaderboardPage() {
                     </div>
                   </div>
                 </div>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: '14px', fontWeight: 600 }}>{fmt(user.totalValue)}</div>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: '14px', color: 'var(--muted)' }}>{user.totalItems}</div>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: '14px', color: user.totalGain >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: '13px', fontWeight: 600 }}>{fmt(user.totalValue)}</div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: '13px', color: 'var(--muted)' }}>{user.totalItems}</div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: '13px', color: user.totalGain >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
                   {user.totalGain >= 0 ? '+' : ''}{fmt(user.totalGain)}
                 </div>
               </a>
