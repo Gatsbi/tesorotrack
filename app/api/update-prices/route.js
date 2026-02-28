@@ -217,22 +217,33 @@ export async function GET(request) {
 
   const purge = searchParams.get('purge') === 'true';
 
-  const { data: allSets, error: setsError } = await supabase
-    .from('sets')
-    .select('id, name, category, theme, set_number, image_url')
-    .not('set_number', 'is', null)
-    .neq('set_number', '')
-    .neq('set_number', '—')
-    .order('last_price_update', { ascending: true, nullsFirst: true });
+  // Support single-set testing: ?setId=UUID
+  const singleSetId = searchParams.get('setId');
 
-  if (setsError || !allSets?.length) {
-    return Response.json({ error: 'No sets with set numbers found' }, { status: 500 });
+  let allSets, setsError;
+  if (singleSetId) {
+    ({ data: allSets, error: setsError } = await supabase
+      .from('sets')
+      .select('id, name, category, theme, set_number, image_url')
+      .eq('id', singleSetId));
+  } else {
+    ({ data: allSets, error: setsError } = await supabase
+      .from('sets')
+      .select('id, name, category, theme, set_number, image_url')
+      .not('set_number', 'is', null)
+      .neq('set_number', '')
+      .neq('set_number', '—')
+      .order('last_price_update', { ascending: true, nullsFirst: true }));
   }
 
-  const batchSize = parseInt(searchParams.get('size') || '50');
-  const batch = parseInt(searchParams.get('batch') || '0');
-  const setsToProcess = allSets.slice(batch * batchSize, (batch + 1) * batchSize);
-  const isLastBatch = (batch + 1) * batchSize >= allSets.length;
+  if (setsError || !allSets?.length) {
+    return Response.json({ error: 'No sets found' }, { status: 500 });
+  }
+
+  const batchSize = singleSetId ? 1 : parseInt(searchParams.get('size') || '50');
+  const batch = singleSetId ? 0 : parseInt(searchParams.get('batch') || '0');
+  const setsToProcess = singleSetId ? allSets : allSets.slice(batch * batchSize, (batch + 1) * batchSize);
+  const isLastBatch = singleSetId ? true : (batch + 1) * batchSize >= allSets.length;
 
   if (setsToProcess.length === 0) {
     return Response.json({ done: true, message: 'All sets processed' });
