@@ -39,12 +39,12 @@ function buildQuery(set) {
     'LEGO': 'LEGO',
     'Mega': set.theme || 'Mega',
     'Funko Pop': 'Funko Pop',
-  }[set.category] || set.category
-  return `"${set.set_number}" ${categoryKeyword}`
+  }[set.category] || set.category;
+  return `"${set.set_number}" ${categoryKeyword}`;
 }
 
 async function searchBySetNumber(set, token) {
-  const query = buildQuery(set)
+  const query = buildQuery(set);
   const params = new URLSearchParams({
     q: query,
     filter: 'conditions:{NEW|USED},buyingOptions:{FIXED_PRICE|AUCTION}',
@@ -74,42 +74,58 @@ async function searchBySetNumber(set, token) {
   }
 }
 
-// Extract real sale date from eBay item (falls back to today if not available)
 function parseSaleDate(item) {
-  // eBay Browse API provides itemEndDate for ended auctions/BIN
-  const endDate = item?.itemEndDate || item?.itemCreationDate
+  const endDate = item?.itemEndDate || item?.itemCreationDate;
   if (endDate) {
-    try {
-      return new Date(endDate).toISOString().split('T')[0]
-    } catch (e) {}
+    try { return new Date(endDate).toISOString().split('T')[0]; } catch (e) {}
   }
-  return new Date().toISOString().split('T')[0]
+  return new Date().toISOString().split('T')[0];
 }
 
-function parseItem(item, setId, setNumber) {
+// Find all set-number-like tokens in a title
+// Matches: 4-6 digit numbers OR 2-3 uppercase letters + 2-3 digits (Mega Construx)
+function findSetNumbersInTitle(title) {
+  if (!title) return [];
+  const matches = title.match(/\b([A-Z]{2,3}\d{2,3}|\d{4,6})\b/gi) || [];
+  return matches;
+}
+
+function parseItem(item, setId, setNumber, category) {
   const price = parseFloat(item?.price?.value || 0);
   if (price <= 0 || price > 5000) return null;
 
-  const title = (item?.title || '').toLowerCase();
+  const title = item?.title || '';
+  const titleLower = title.toLowerCase();
 
   // Skip accessories, add-ons, and unrelated items
   const skipKeywords = [
     'lot of', 'bundle', 'parts only', 'instructions only', 'incomplete',
     'custom', 'minifig only', 'minifigure only', 'pieces only',
     'light kit', 'led kit', 'led light', 'lighting kit', 'lights kit',
+    'led kit for', 'light set for',
     'sticker', 'stickers', 'decal', 'decals',
     'compatible with', 'fits set', 'for set', 'designed for',
     'display case', 'display stand', 'frame',
     'bag', 'polybag',
+    'instruction book', 'manual only',
+    'replacement parts', 'spare parts',
+    'mystery bag', 'blind bag',
   ];
-  if (skipKeywords.some(kw => title.includes(kw))) return null;
+  if (skipKeywords.some(kw => titleLower.includes(kw))) return null;
 
-  // Require set number appears as a word boundary (not inside another number)
-  // e.g. "76440" should not match "176440" or "764401"
+  // Require set number in title at a word boundary (not inside larger number/word)
   if (setNumber) {
-    const escaped = setNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const wordBoundary = new RegExp(`(?<![\\d])${escaped}(?![\\d])`, 'i')
-    if (!wordBoundary.test(item?.title || '')) return null
+    const escaped = setNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const wordBoundary = new RegExp(`(?<![\\d A-Za-z])${escaped}(?![\\d A-Za-z])`, 'i');
+    if (!wordBoundary.test(title)) return null;
+  }
+
+  // Reject listings containing MORE THAN ONE distinct set number
+  // Catches "LEGO 75192 + 76440" bundles or "LEGO 75273 & 75274" combos
+  if (setNumber) {
+    const foundNumbers = findSetNumbersInTitle(title);
+    const otherSetNumbers = foundNumbers.filter(n => n.toUpperCase() !== setNumber.toUpperCase());
+    if (otherSetNumbers.length > 0) return null;
   }
 
   const conditionId = item?.conditionId || '';
@@ -122,9 +138,9 @@ function parseItem(item, setId, setNumber) {
   return {
     set_id: setId,
     sale_price: price,
-    sale_date: parseSaleDate(item),  // real date, not today
+    sale_date: parseSaleDate(item),
     condition,
-    listing_title: (item?.title || '').substring(0, 255),
+    listing_title: title.substring(0, 255),
     ebay_item_id: (item?.itemId || '').replace(/\|/g, '_'),
     source: 'ebay',
   };
@@ -144,20 +160,39 @@ async function updateAverages(supabase, setIds) {
 
     if (!prices?.length) continue;
 
-    const vals = prices.map(p => parseFloat(p.sale_price)).sort((a, b) => a - b);
-    const trim = Math.floor(vals.length * 0.1);
-    const trimmed = vals.slice(trim, vals.length - (trim || 1));
+    const newPrices = prices.filter(p => p.condition === 'New Sealed').map(p => parseFloat(p.sale_price));
+    const usedPrices = prices.filter(p => ['Used', 'Open Box'].includes(p.condition)).map(p => parseFloat(p.sale_price));
+    const allPrices = prices.map(p => parseFloat(p.sale_price)).sort((a, b) => a - b);
+
+    const trim = Math.floor(allPrices.length * 0.1);
+    const trimmed = allPrices.slice(trim, allPrices.length - (trim || 1));
     const avg = trimmed.reduce((s, v) => s + v, 0) / trimmed.length;
 
-    const newPrices = prices.filter(p => p.condition === 'New Sealed').map(p => parseFloat(p.sale_price));
     const newAvg = newPrices.length ? newPrices.reduce((s, v) => s + v, 0) / newPrices.length : null;
+    const usedAvg = usedPrices.length ? usedPrices.reduce((s, v) => s + v, 0) / usedPrices.length : null;
 
     await supabase.from('sets').update({
       avg_sale_price: Math.round(avg * 100) / 100,
       new_avg_price: newAvg ? Math.round(newAvg * 100) / 100 : null,
+      used_avg_price: usedAvg ? Math.round(usedAvg * 100) / 100 : null,
       last_price_update: new Date().toISOString(),
       total_sales: prices.length,
+      new_sales_count: newPrices.length,
+      used_sales_count: usedPrices.length,
     }).eq('id', setId);
+  }
+}
+
+async function backfillSetImage(supabase, set, items) {
+  // If set is missing an image, try to grab eBay thumbnail from first relevant listing
+  if (set.image_url) return;
+  for (const item of items) {
+    const imgUrl = item?.image?.imageUrl || item?.thumbnailImages?.[0]?.imageUrl;
+    if (imgUrl && imgUrl.startsWith('http')) {
+      await supabase.from('sets').update({ image_url: imgUrl }).eq('id', set.id);
+      set.image_url = imgUrl; // mark as filled so we don't do it again this run
+      return;
+    }
   }
 }
 
@@ -179,23 +214,21 @@ export async function GET(request) {
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-  // purge=true deletes existing prices for each set before saving new ones
-  // Use this to overwrite bad/old data
   const purge = searchParams.get('purge') === 'true';
 
   const { data: allSets, error: setsError } = await supabase
     .from('sets')
-    .select('id, name, category, theme, set_number')
+    .select('id, name, category, theme, set_number, image_url')
     .not('set_number', 'is', null)
     .neq('set_number', '')
     .neq('set_number', '—')
-    .order('last_price_update', { ascending: true, nullsFirst: true })
+    .order('last_price_update', { ascending: true, nullsFirst: true });
 
   if (setsError || !allSets?.length) {
     return Response.json({ error: 'No sets with set numbers found' }, { status: 500 });
   }
 
-  const batchSize = parseInt(searchParams.get('size') || '50')
+  const batchSize = parseInt(searchParams.get('size') || '50');
   const batch = parseInt(searchParams.get('batch') || '0');
   const setsToProcess = allSets.slice(batch * batchSize, (batch + 1) * batchSize);
   const isLastBatch = (batch + 1) * batchSize >= allSets.length;
@@ -206,18 +239,18 @@ export async function GET(request) {
 
   let totalSaved = 0;
   let totalPurged = 0;
+  let totalSkippedMultiSet = 0;
   const updatedSetIds = [];
   const log = [];
 
   for (const set of setsToProcess) {
-    // Purge existing prices for this set if requested
     if (purge) {
       const { count } = await supabase
         .from('prices')
         .delete()
         .eq('set_id', set.id)
-        .select('*', { count: 'exact', head: true })
-      totalPurged += count || 0
+        .select('*', { count: 'exact', head: true });
+      totalPurged += count || 0;
     }
 
     const result = await searchBySetNumber(set, token);
@@ -228,11 +261,25 @@ export async function GET(request) {
       continue;
     }
 
+    // Backfill missing images from eBay thumbnails
+    await backfillSetImage(supabase, set, result.items);
+
     const prices = [];
+    let skippedMultiSet = 0;
+    let skippedKeyword = 0;
     for (const item of result.items) {
-      const price = parseItem(item, set.id, set.set_number);
-      if (price) prices.push(price);
+      const price = parseItem(item, set.id, set.set_number, set.category);
+      if (!price) {
+        // Count multi-set skips separately for logging
+        const foundNumbers = findSetNumbersInTitle(item?.title || '');
+        const otherNums = foundNumbers.filter(n => n.toUpperCase() !== (set.set_number || '').toUpperCase());
+        if (otherNums.length > 0) skippedMultiSet++;
+        else skippedKeyword++;
+      } else {
+        prices.push(price);
+      }
     }
+    totalSkippedMultiSet += skippedMultiSet;
 
     if (prices.length > 0) {
       const { error: upsertError } = await supabase
@@ -248,10 +295,10 @@ export async function GET(request) {
     log.push({
       set: set.name,
       setNumber: set.set_number,
-      category: set.category,
-      theme: set.theme,
       ebayTotal: result.total,
       matched: prices.length,
+      skippedMultiSet,
+      skippedKeyword,
     });
 
     await sleep(300);
@@ -270,6 +317,7 @@ export async function GET(request) {
     totalSetsWithNumbers: allSets.length,
     setsProcessed: setsToProcess.length,
     pricesSaved: totalSaved,
+    skippedMultiSetListings: totalSkippedMultiSet,
     setsUpdated: updatedSetIds.length,
     isLastBatch,
     nextBatch: isLastBatch ? null : `${request.url.split('?')[0]}?batch=${batch + 1}&size=${batchSize}${purge ? '&purge=true' : ''}`,

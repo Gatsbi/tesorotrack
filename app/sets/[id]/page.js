@@ -53,19 +53,33 @@ export default function SetDetailPage({ params }) {
     return Math.round(((avg - retail) / retail) * 100)
   }
 
+  // Filter prices by selected condition
   const filteredPrices = conditionFilter === 'All' ? prices : prices.filter(p => p.condition === conditionFilter)
   const conditions = [...new Set(prices.map(p => p.condition).filter(Boolean))]
 
-  // Build chart points — group by month if dates are spread, otherwise show price distribution
+  // Compute stats from the FILTERED set (so clicking condition updates the cards)
+  const filteredVals = filteredPrices.map(p => parseFloat(p.sale_price)).filter(v => !isNaN(v))
+  const allTimeLow = filteredVals.length ? Math.min(...filteredVals) : null
+  const allTimeHigh = filteredVals.length ? Math.max(...filteredVals) : null
+  const computedAvg = filteredVals.length
+    ? filteredVals.reduce((s, v) => s + v, 0) / filteredVals.length
+    : null
+
+  // Avg sale price shown: use condition-specific field when filtered, otherwise overall
+  const displayAvg = conditionFilter === 'New Sealed'
+    ? (set?.new_avg_price || computedAvg)
+    : conditionFilter === 'Used' || conditionFilter === 'Open Box'
+    ? (set?.used_avg_price || computedAvg)
+    : (set?.avg_sale_price || computedAvg)
+
+  // Chart
   const buildChartPoints = (priceList) => {
     if (!priceList.length) return []
 
-    // Check if all prices have the same date (old data imported with today's date)
     const uniqueDates = [...new Set(priceList.map(p => p.sale_date).filter(Boolean))]
     const allSameDate = uniqueDates.length <= 2
 
     if (!allSameDate) {
-      // Real dates — group by month
       const monthlyData = {}
       priceList.forEach(p => {
         const month = p.sale_date?.substring(0, 7)
@@ -76,13 +90,11 @@ export default function SetDetailPage({ params }) {
       return Object.entries(monthlyData)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([month, vals]) => ({
-          label: month.substring(5), // "MM"
+          label: month.substring(5),
           avg: vals.reduce((s, v) => s + v, 0) / vals.length,
           count: vals.length,
         }))
     } else {
-      // All same date — show price distribution as percentile buckets
-      // Sort prices and split into 8 buckets to simulate a trend line
       const sorted = [...priceList].sort((a, b) => parseFloat(a.sale_price) - parseFloat(b.sale_price))
       const bucketSize = Math.max(1, Math.floor(sorted.length / 8))
       const buckets = []
@@ -141,9 +153,7 @@ export default function SetDetailPage({ params }) {
     </div>
   )
 
-  const change = pct(set.retail_price, set.avg_sale_price)
-  const allTimeLow = prices.length ? Math.min(...prices.map(p => parseFloat(p.sale_price))) : null
-  const allTimeHigh = prices.length ? Math.max(...prices.map(p => parseFloat(p.sale_price))) : null
+  const change = pct(set.retail_price, displayAvg)
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '48px 40px' }}>
@@ -227,12 +237,18 @@ export default function SetDetailPage({ params }) {
           <h1 style={{ fontFamily: 'var(--display)', fontSize: '32px', fontWeight: 900, letterSpacing: '-1px', marginBottom: '6px', lineHeight: 1.2 }}>{set.name}</h1>
           <p style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '24px' }}>{set.category} · {set.theme} {set.set_number ? `· #${set.set_number}` : ''}</p>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '28px' }}>
+          {/* Stats cards — update reactively when condition filter changes */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '8px' }}>
             {[
-              { label: 'Avg Sale Price', value: fmt(set.avg_sale_price), sub: 'Last 90 days', highlight: true },
+              {
+                label: conditionFilter === 'All' ? 'Avg Sale Price' : `Avg (${conditionFilter})`,
+                value: fmt(displayAvg),
+                sub: 'Last 90 days',
+                highlight: true,
+              },
               { label: 'MSRP', value: fmt(set.retail_price), sub: 'Original retail' },
-              { label: 'All-Time High', value: allTimeHigh ? `$${allTimeHigh.toFixed(2)}` : '—', sub: 'Highest recorded' },
-              { label: 'All-Time Low', value: allTimeLow ? `$${allTimeLow.toFixed(2)}` : '—', sub: 'Lowest recorded' },
+              { label: 'All-Time High', value: allTimeHigh ? `$${allTimeHigh.toFixed(2)}` : '—', sub: conditionFilter === 'All' ? 'All conditions' : conditionFilter },
+              { label: 'All-Time Low', value: allTimeLow ? `$${allTimeLow.toFixed(2)}` : '—', sub: conditionFilter === 'All' ? 'All conditions' : conditionFilter },
             ].map(card => (
               <div key={card.label} style={{
                 padding: '16px', borderRadius: '12px',
@@ -245,6 +261,22 @@ export default function SetDetailPage({ params }) {
               </div>
             ))}
           </div>
+
+          {/* Quick condition breakdown pills */}
+          {set.new_sales_count || set.used_sales_count ? (
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
+              {set.new_avg_price && (
+                <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 10px', borderRadius: '20px', background: 'var(--green-light)', color: 'var(--green)' }}>
+                  New Sealed avg: {fmt(set.new_avg_price)} ({set.new_sales_count || 0} sales)
+                </span>
+              )}
+              {set.used_avg_price && (
+                <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 10px', borderRadius: '20px', background: 'var(--surface)', color: 'var(--muted)', border: '1px solid var(--border)' }}>
+                  Used avg: {fmt(set.used_avg_price)} ({set.used_sales_count || 0} sales)
+                </span>
+              )}
+            </div>
+          ) : <div style={{ marginBottom: '20px' }} />}
 
           {change !== null && (
             <div style={{
@@ -267,6 +299,7 @@ export default function SetDetailPage({ params }) {
             </div>
           )}
 
+          {/* Price History chart — condition filter buttons here too */}
           <div style={{ background: 'var(--white)', borderRadius: '14px', border: '1.5px solid var(--border)', padding: '20px', marginBottom: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <div>
@@ -274,8 +307,11 @@ export default function SetDetailPage({ params }) {
                 {allSameDate && chartPoints.length >= 2 && (
                   <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>Showing price distribution — run price update to get timeline data</div>
                 )}
+                {conditionFilter !== 'All' && (
+                  <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>Filtered: {conditionFilter} · stats cards updated above</div>
+                )}
               </div>
-              <div style={{ display: 'flex', gap: '6px' }}>
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 {['All', ...conditions].map(c => (
                   <button key={c} onClick={() => setConditionFilter(c)} style={{
                     padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700,
@@ -307,6 +343,7 @@ export default function SetDetailPage({ params }) {
             )}
           </div>
 
+          {/* Recent sales list */}
           <div style={{ background: 'var(--white)', borderRadius: '14px', border: '1.5px solid var(--border)', overflow: 'hidden' }}>
             <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', fontWeight: 800, fontSize: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span>Recent eBay Sales</span>
