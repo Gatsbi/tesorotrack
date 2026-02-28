@@ -90,7 +90,7 @@ function findSetNumbersInTitle(title) {
   return matches;
 }
 
-function parseItem(item, setId, setNumber, category, knownPartIds = null) {
+function parseItem(item, setId, setNumber, category) {
   const price = parseFloat(item?.price?.value || 0);
   if (price <= 0 || price > 5000) return null;
 
@@ -119,17 +119,12 @@ function parseItem(item, setId, setNumber, category, knownPartIds = null) {
   const minifigPattern = /\bminifig(ure)?s?\b|\bmini[- ]?fig(ure)?s?\b|\bfigure only\b|\bfrom set\b/i;
   if (minifigPattern.test(title)) return null;
 
-  // Check title for known LEGO part/minifig IDs — only applies to LEGO sets
-  // knownPartIds is a Set of lowercase part numbers loaded from lego_parts before the loop
+  // Reject listings containing BrickLink-style minifig IDs — only applies to LEGO sets
+  // BrickLink minifig IDs follow theme-prefix + 3-4 digits pattern (e.g. sw1088, hp0001, njo123)
+  // These IDs only appear in eBay titles when the listing is for an individual minifig, not a set
   if (category === 'LEGO') {
-    if (knownPartIds && knownPartIds.size > 0) {
-      const titleTokens = title.match(/\b[a-z]{1,4}\d{2,6}\b/gi) || [];
-      if (titleTokens.some(t => knownPartIds.has(t.toLowerCase()))) return null;
-    } else {
-      // Fallback if DB lookup failed: generic part ID pattern
-      const partIdPattern = /\b[a-z]{2,4}\d{3,5}\b/i;
-      if (partIdPattern.test(title)) return null;
-    }
+    const blMinifigPattern = /\b(sw|hp|cas|cty|col|tlm|sh|lor|min|njo|atl|pi|rac|jw|dis|hol|twn|imp|sp|adv|alp|agt|pm|gs|mof|mm|cre|ind|toy|car|wc|dim|bob|elc|gen|fst|ww|idea|har|fb|mb|bt|mk|sk|arc|elf|gal|cmf|vp|scb|vid|rwb|gry|blk)\d{3,4}\b/i;
+    if (blMinifigPattern.test(title)) return null;
   }
 
 
@@ -268,18 +263,6 @@ export async function GET(request) {
     return Response.json({ done: true, message: 'All sets processed' });
   }
 
-  // Load known LEGO part/minifig IDs for title filtering
-  let knownPartIds = null;
-  if (setsToProcess.some(s => s.category === 'LEGO')) {
-    const { data: partsData } = await supabase
-      .from('lego_parts')
-      .select('part_num')
-      .limit(200000);
-    if (partsData?.length) {
-      knownPartIds = new Set(partsData.map(p => p.part_num.toLowerCase()));
-    }
-  }
-
   let totalSaved = 0;
   let totalPurged = 0;
   let totalSkippedMultiSet = 0;
@@ -311,7 +294,7 @@ export async function GET(request) {
     let skippedMultiSet = 0;
     let skippedKeyword = 0;
     for (const item of result.items) {
-      const price = parseItem(item, set.id, set.set_number, set.category, knownPartIds);
+      const price = parseItem(item, set.id, set.set_number, set.category);
       if (!price) {
         // Count multi-set skips separately for logging
         const foundNumbers = findSetNumbersInTitle(item?.title || '');
