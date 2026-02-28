@@ -13,7 +13,7 @@ export default function TrendingPage() {
       // Most sales activity
       const { data: soldData } = await supabase
         .from('sets')
-        .select('id, name, set_number, category, theme, retail_price, avg_sale_price, total_sales, is_retired')
+        .select('id, name, set_number, category, theme, retail_price, avg_sale_price, new_avg_price, total_sales, is_retired, image_url')
         .not('avg_sale_price', 'is', null)
         .order('total_sales', { ascending: false })
         .limit(12)
@@ -22,7 +22,7 @@ export default function TrendingPage() {
       // Biggest premium over retail (gainers)
       const { data: allData } = await supabase
         .from('sets')
-        .select('id, name, set_number, category, theme, retail_price, avg_sale_price, total_sales, is_retired')
+        .select('id, name, set_number, category, theme, retail_price, avg_sale_price, new_avg_price, total_sales, is_retired, image_url')
         .not('avg_sale_price', 'is', null)
         .not('retail_price', 'is', null)
       
@@ -62,8 +62,12 @@ export default function TrendingPage() {
         height: '90px', background: 'var(--surface)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: '40px', borderBottom: '1px solid var(--border)', position: 'relative',
+        overflow: 'hidden',
       }}>
-        {catIcon[set.category] || '📦'}
+        {set.image_url
+          ? <img src={set.image_url} alt={set.name} style={{ width: '100%', height: '100%', objectFit: 'contain', padding: '8px' }} onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'block' }} />
+          : null}
+        <span style={{ display: set.image_url ? 'none' : 'block' }}>{catIcon[set.category] || '📦'}</span>
         {set.is_retired && (
           <span style={{
             position: 'absolute', top: '6px', left: '6px',
@@ -83,7 +87,7 @@ export default function TrendingPage() {
         <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600, marginBottom: '3px' }}>{set.category} · {set.theme}</div>
         <div style={{ fontSize: '13px', fontWeight: 800, lineHeight: 1.3, marginBottom: '8px' }}>{set.name}</div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ fontFamily: 'var(--mono)', fontSize: '15px', fontWeight: 500 }}>{fmt(set.avg_sale_price)}</div>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: '15px', fontWeight: 500 }}>{fmt(set.new_avg_price || set.avg_sale_price)}</div>
           <div style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>MSRP {fmt(set.retail_price)}</div>
         </div>
         {set.total_sales && (
