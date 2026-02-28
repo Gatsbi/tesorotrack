@@ -113,19 +113,20 @@ function parseItem(item, setId, setNumber, category) {
   ];
   if (skipKeywords.some(kw => titleLower.includes(kw))) return null;
 
-  // Require set number in title at a word boundary (not inside larger number/word)
+
+  // Require set number in title — must not be embedded inside a larger number
+  // "LEGO 75273" matches fine; "175273" or "752730" do not
   if (setNumber) {
     const escaped = setNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const wordBoundary = new RegExp(`(?<![\\d A-Za-z])${escaped}(?![\\d A-Za-z])`, 'i');
-    if (!wordBoundary.test(title)) return null;
+    const embeddedCheck = new RegExp(`(?<!\\d)${escaped}(?!\\d)`, 'i');
+    if (!embeddedCheck.test(title)) return null;
   }
 
-  // Reject listings containing MORE THAN ONE distinct set number
-  // Catches "LEGO 75192 + 76440" bundles or "LEGO 75273 & 75274" combos
-  if (setNumber) {
-    const foundNumbers = findSetNumbersInTitle(title);
-    const otherSetNumbers = foundNumbers.filter(n => n.toUpperCase() !== setNumber.toUpperCase());
-    if (otherSetNumbers.length > 0) return null;
+  // Reject multi-set bundle listings like "75273 + 75274" or "75273 & 76440"
+  // Uses joining words/symbols to avoid false positives from years, piece counts, etc.
+  if (setNumber && /^\d{5,6}$/.test(setNumber)) {
+    const bundlePattern = /\b\d{5,6}\b\s*(?:\+|&|and|w\/|with|\|)\s*\b\d{5,6}\b/i;
+    if (bundlePattern.test(title)) return null;
   }
 
   const conditionId = item?.conditionId || '';
