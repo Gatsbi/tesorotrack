@@ -22,6 +22,37 @@ export default function RootLayout({ children }) {
 }
 
 function Footer() {
+  const cols = [
+    {
+      title: 'Categories',
+      links: [
+        { label: 'Mega Construx', href: '/browse?cat=Mega+Construx' },
+        { label: 'Funko Pop', href: '/browse?cat=Funko+Pop' },
+        { label: 'LEGO', href: '/browse?cat=LEGO' },
+        { label: 'Browse All', href: '/browse' },
+      ],
+    },
+    {
+      title: 'Tools',
+      links: [
+        { label: 'Portfolio Tracker', href: '/portfolio' },
+        { label: 'Watchlist', href: '/watchlist' },
+        { label: 'Trending', href: '/trending' },
+        { label: 'Leaderboard', href: '/leaderboard' },
+        { label: 'Submit a Set', href: '/submit' },
+      ],
+    },
+    {
+      title: 'Company',
+      links: [
+        { label: 'About', href: '/about' },
+        { label: 'How It Works', href: '/about#how-it-works' },
+        { label: 'Data Sources', href: '/about#data-sources' },
+        { label: 'Contact', href: 'mailto:hello@tesorotrack.com' },
+      ],
+    },
+  ]
+
   return (
     <footer style={{
       background: 'var(--text)', color: 'rgba(255,255,255,0.5)',
@@ -48,6 +79,7 @@ function Footer() {
           .footer-grid { grid-template-columns: 1fr; gap: 20px; }
           .footer-bottom { flex-direction: column; align-items: flex-start; }
         }
+        .footer-link:hover { color: rgba(255,255,255,0.9) !important; }
       `}</style>
       <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
         <div className="footer-grid">
@@ -60,16 +92,14 @@ function Footer() {
               Real eBay price data for serious collectors. Track your collection value, spot trends, and know when to buy or sell.
             </p>
           </div>
-          {[
-            { title: 'Categories', links: ['Mega Construx', 'Funko Pop', 'LEGO', 'Browse All'] },
-            { title: 'Tools', links: ['Portfolio Tracker', 'Watchlist', 'Trending', 'Price Alerts', 'Submit a Set'] },
-            { title: 'Company', links: ['About', 'How It Works', 'Data Sources', 'Contact'] },
-          ].map(col => (
+          {cols.map(col => (
             <div key={col.title}>
               <div style={{ color: 'white', fontWeight: 700, fontSize: '14px', marginBottom: '12px' }}>{col.title}</div>
               {col.links.map(link => (
-                <div key={link} style={{ fontSize: '13px', marginBottom: '8px' }}>
-                  <a href="#" style={{ color: 'rgba(255,255,255,0.5)', textDecoration: 'none' }}>{link}</a>
+                <div key={link.label} style={{ fontSize: '13px', marginBottom: '8px' }}>
+                  <a href={link.href} className="footer-link" style={{ color: 'rgba(255,255,255,0.5)', textDecoration: 'none' }}>
+                    {link.label}
+                  </a>
                 </div>
               ))}
             </div>
