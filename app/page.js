@@ -9,16 +9,14 @@ export default function HomePage() {
 
   useEffect(() => {
     async function load() {
-      // Load trending sets (highest total sales)
       const { data: trendingData } = await supabase
         .from('sets')
-        .select('id, name, set_number, category, theme, retail_price, avg_sale_price, total_sales, is_retired')
+        .select('id, name, set_number, category, theme, retail_price, avg_sale_price, total_sales, is_retired, image_url')
         .not('avg_sale_price', 'is', null)
         .order('total_sales', { ascending: false })
         .limit(8)
       setTrending(trendingData || [])
 
-      // Load stats
       const { count: setCount } = await supabase
         .from('sets')
         .select('*', { count: 'exact', head: true })
@@ -42,7 +40,7 @@ export default function HomePage() {
     return Math.round(((avg - retail) / retail) * 100)
   }
 
-  const catIcon = { 'Mega Construx': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }
+  const catIcon = { 'Mega': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }
   const fmt = (n) => n >= 1000 ? `$${(n/1000).toFixed(1)}k` : `$${parseFloat(n).toFixed(2)}`
 
   return (
@@ -52,7 +50,6 @@ export default function HomePage() {
         background: 'linear-gradient(135deg, #1c1a17 0%, #2d2820 100%)',
         padding: '100px 40px 80px', position: 'relative', overflow: 'hidden',
       }}>
-        {/* Decorative circles */}
         <div style={{
           position: 'absolute', top: '-100px', right: '-100px',
           width: '500px', height: '500px', borderRadius: '50%',
@@ -95,7 +92,6 @@ export default function HomePage() {
             Track your portfolio, spot trends, buy and sell smarter.
           </p>
 
-          {/* Search bar */}
           <form onSubmit={handleSearch} style={{
             display: 'flex', background: 'white', borderRadius: '14px',
             overflow: 'hidden', maxWidth: '620px', margin: '0 auto 32px',
@@ -119,7 +115,6 @@ export default function HomePage() {
             }}>Search</button>
           </form>
 
-          {/* Quick searches */}
           <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
             {['Halo Warthog', 'Pokémon Charizard', 'LEGO Millennium Falcon', 'Funko Grogu', 'Masters of the Universe'].map(term => (
               <button key={term} onClick={() => window.location.href = `/search?q=${encodeURIComponent(term)}`}
@@ -136,9 +131,7 @@ export default function HomePage() {
       </section>
 
       {/* STATS BAR */}
-      <section style={{
-        background: 'var(--accent)', padding: '20px 40px',
-      }}>
+      <section style={{ background: 'var(--accent)', padding: '20px 40px' }}>
         <div style={{
           maxWidth: '1200px', margin: '0 auto',
           display: 'flex', justifyContent: 'center', gap: '60px',
@@ -167,7 +160,7 @@ export default function HomePage() {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
           {[
-            { name: 'Mega Construx', icon: '🧱', desc: 'Halo, Pokémon, Call of Duty, Masters of the Universe and more. Track retired sets climbing fast.', href: '/browse?cat=Mega+Construx', badge: 'Popular' },
+            { name: 'Mega', icon: '🧱', desc: 'Halo, Pokémon, Call of Duty, Masters of the Universe and more. Track retired sets climbing fast.', href: '/browse?cat=Mega', badge: 'Popular' },
             { name: 'Funko Pop', icon: '👾', desc: 'Exclusives, chase variants, and vaulted figures. See what\'s actually selling and for how much.', href: '/browse?cat=Funko+Pop', badge: 'Hot' },
             { name: 'LEGO', icon: '🏗️', desc: 'Icons, Technic, Star Wars, and more. Compare new sealed vs used and track retirement value.', href: '/browse?cat=LEGO', badge: 'New' },
           ].map(cat => (
@@ -219,13 +212,29 @@ export default function HomePage() {
                   onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.08)'; e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'var(--accent)' }}
                   onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)' }}
                 >
+                  {/* Image area — same pattern as browse page */}
                   <div style={{
-                    height: '110px', background: 'var(--surface)',
+                    height: '140px', background: 'var(--surface)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: '48px', borderBottom: '1px solid var(--border)',
-                    position: 'relative',
+                    borderBottom: '1px solid var(--border)', position: 'relative',
+                    overflow: 'hidden',
                   }}>
-                    {catIcon[set.category] || '📦'}
+                    {set.image_url ? (
+                      <img
+                        src={set.image_url}
+                        alt={set.name}
+                        style={{ width: '100%', height: '100%', objectFit: 'contain', padding: '8px' }}
+                        onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex' }}
+                      />
+                    ) : null}
+                    <div style={{
+                      fontSize: '48px',
+                      display: set.image_url ? 'none' : 'flex',
+                      alignItems: 'center', justifyContent: 'center',
+                      width: '100%', height: '100%',
+                    }}>
+                      {catIcon[set.category] || '📦'}
+                    </div>
                     {set.is_retired && (
                       <span style={{
                         position: 'absolute', top: '8px', left: '8px',
@@ -235,6 +244,7 @@ export default function HomePage() {
                       }}>Retired</span>
                     )}
                   </div>
+
                   <div style={{ padding: '14px' }}>
                     <div style={{ fontSize: '13px', fontWeight: 800, marginBottom: '2px', lineHeight: 1.3 }}>{set.name}</div>
                     <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600, marginBottom: '10px' }}>{set.category} · {set.theme}</div>

@@ -57,7 +57,7 @@ export default function NavClient() {
             borderRadius: '7px', display: 'flex', alignItems: 'center',
             justifyContent: 'center', fontSize: '14px',
           }}>💎</span>
-          Tesoro Track
+          TesoroTrack
         </a>
 
         {/* Desktop nav links */}
