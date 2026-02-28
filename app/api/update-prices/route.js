@@ -166,51 +166,9 @@ function parseItem(item, setId, setNumber, category) {
 }
 
 async function updateAverages(supabase, setIds) {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 90);
-  const cutoffStr = cutoff.toISOString().split('T')[0];
-
+  // Use a Supabase SQL function to avoid client-side row limits
   for (const setId of setIds) {
-    // Recent prices (90 days) for averages
-    const { data: recentPrices } = await supabase
-      .from('prices')
-      .select('sale_price, condition')
-      .eq('set_id', setId)
-      .gte('sale_date', cutoffStr);
-
-    const prices = recentPrices || [];
-
-    // Fetch all-time total separately for the card display count
-    const { data: allTimePrices } = await supabase
-      .from('prices')
-      .select('sale_price, condition')
-      .eq('set_id', setId);
-
-    if (!allTimePrices?.length) continue;
-
-    // Averages from 90-day window; fall back to all-time if window is empty
-    const pricesToAvg = prices.length ? prices : allTimePrices;
-
-    const newPrices = pricesToAvg.filter(p => p.condition === 'New Sealed').map(p => parseFloat(p.sale_price));
-    const usedPrices = pricesToAvg.filter(p => ['Used', 'Open Box'].includes(p.condition)).map(p => parseFloat(p.sale_price));
-    const allPrices = pricesToAvg.map(p => parseFloat(p.sale_price)).sort((a, b) => a - b);
-
-    const trim = Math.floor(allPrices.length * 0.1);
-    const trimmed = allPrices.slice(trim, allPrices.length - (trim || 1));
-    const avg = trimmed.length ? trimmed.reduce((s, v) => s + v, 0) / trimmed.length : null;
-
-    const newAvg = newPrices.length ? newPrices.reduce((s, v) => s + v, 0) / newPrices.length : null;
-    const usedAvg = usedPrices.length ? usedPrices.reduce((s, v) => s + v, 0) / usedPrices.length : null;
-
-    await supabase.from('sets').update({
-      avg_sale_price: avg ? Math.round(avg * 100) / 100 : null,
-      new_avg_price: newAvg ? Math.round(newAvg * 100) / 100 : null,
-      used_avg_price: usedAvg ? Math.round(usedAvg * 100) / 100 : null,
-      last_price_update: new Date().toISOString(),
-      total_sales: allTimePrices.length,
-      new_sales_count: newPrices.length,
-      used_sales_count: usedPrices.length,
-    }).eq('id', setId);
+    await supabase.rpc('update_set_stats', { p_set_id: setId });
   }
 }
 
