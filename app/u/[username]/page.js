@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { supabase } from '../../../supabase'
-import { useAuth } from '../../../AuthProvider'
+import { supabase } from '../../supabase'
+import { useAuth } from '../../AuthProvider'
 
 export default function UserProfilePage({ params }) {
   const { user } = useAuth()
