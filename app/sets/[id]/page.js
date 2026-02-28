@@ -1,33 +1,51 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { supabase } from '../../supabase'
+import { supabase } from '../../../supabase'
+import { useAuth } from '../../../AuthProvider'
 
 export default function SetDetailPage({ params }) {
+  const { user } = useAuth()
   const [set, setSet] = useState(null)
   const [prices, setPrices] = useState([])
   const [loading, setLoading] = useState(true)
   const [conditionFilter, setConditionFilter] = useState('All')
 
-  useEffect(() => {
-    loadSet()
-  }, [])
+  // Portfolio modal state
+  const [showPortfolioModal, setShowPortfolioModal] = useState(false)
+  const [portfolioForm, setPortfolioForm] = useState({ quantity: 1, price_paid: '', condition: 'New Sealed', notes: '' })
+  const [saving, setSaving] = useState(false)
+  const [added, setAdded] = useState(false)
+
+  useEffect(() => { loadSet() }, [])
 
   async function loadSet() {
     const { data: setData } = await supabase
-      .from('sets')
-      .select('*')
-      .eq('id', params.id)
-      .single()
+      .from('sets').select('*').eq('id', params.id).single()
     setSet(setData)
-
     const { data: priceData } = await supabase
-      .from('prices')
-      .select('*')
-      .eq('set_id', params.id)
-      .order('sale_date', { ascending: true })
-      .limit(200)
+      .from('prices').select('*').eq('set_id', params.id)
+      .order('sale_date', { ascending: true }).limit(200)
     setPrices(priceData || [])
     setLoading(false)
+  }
+
+  async function addToPortfolio() {
+    if (!user) { window.location.href = '/login'; return }
+    setSaving(true)
+    const { error } = await supabase.from('portfolios').insert({
+      user_id: user.id,
+      set_id: set.id,
+      quantity: parseInt(portfolioForm.quantity),
+      price_paid: parseFloat(portfolioForm.price_paid) || 0,
+      condition: portfolioForm.condition,
+      notes: portfolioForm.notes,
+      date_added: new Date().toISOString().split('T')[0],
+    })
+    setSaving(false)
+    if (error) { alert('Error: ' + error.message); return }
+    setAdded(true)
+    setShowPortfolioModal(false)
+    setTimeout(() => setAdded(false), 3000)
   }
 
   const fmt = (n) => n ? `$${parseFloat(n).toFixed(2)}` : '—'
@@ -36,13 +54,9 @@ export default function SetDetailPage({ params }) {
     return Math.round(((avg - retail) / retail) * 100)
   }
 
-  const filteredPrices = conditionFilter === 'All'
-    ? prices
-    : prices.filter(p => p.condition === conditionFilter)
-
+  const filteredPrices = conditionFilter === 'All' ? prices : prices.filter(p => p.condition === conditionFilter)
   const conditions = [...new Set(prices.map(p => p.condition).filter(Boolean))]
 
-  // Build chart data — group by month
   const monthlyData = {}
   filteredPrices.forEach(p => {
     const month = p.sale_date?.substring(0, 7)
@@ -53,29 +67,21 @@ export default function SetDetailPage({ params }) {
   const chartPoints = Object.entries(monthlyData)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([month, vals]) => ({
-      month,
-      avg: vals.reduce((s, v) => s + v, 0) / vals.length,
-      count: vals.length,
+      month, avg: vals.reduce((s, v) => s + v, 0) / vals.length, count: vals.length,
     }))
 
-  // Sparkline SVG
   const SparkLine = ({ points }) => {
     if (points.length < 2) return null
     const vals = points.map(p => p.avg)
-    const min = Math.min(...vals)
-    const max = Math.max(...vals)
-    const range = max - min || 1
+    const min = Math.min(...vals), max = Math.max(...vals), range = max - min || 1
     const w = 600, h = 120, pad = 20
-
     const coords = points.map((p, i) => ({
       x: pad + (i / (points.length - 1)) * (w - pad * 2),
       y: h - pad - ((p.avg - min) / range) * (h - pad * 2),
     }))
-
     const path = coords.map((c, i) => `${i === 0 ? 'M' : 'L'}${c.x},${c.y}`).join(' ')
     const area = `${path} L${coords[coords.length-1].x},${h} L${coords[0].x},${h} Z`
     const rising = vals[vals.length - 1] >= vals[0]
-
     return (
       <svg viewBox={`0 0 ${w} ${h}`} style={{ width: '100%', height: '160px' }}>
         <defs>
@@ -93,12 +99,13 @@ export default function SetDetailPage({ params }) {
     )
   }
 
-  if (loading) return (
-    <div style={{ textAlign: 'center', padding: '120px 40px', color: 'var(--muted)', fontSize: '16px' }}>
-      Loading...
-    </div>
-  )
+  const inputStyle = {
+    width: '100%', padding: '10px 14px', borderRadius: '8px',
+    border: '1.5px solid var(--border)', fontFamily: 'var(--sans)',
+    fontSize: '14px', outline: 'none', background: 'var(--bg)', boxSizing: 'border-box',
+  }
 
+  if (loading) return <div style={{ textAlign: 'center', padding: '120px 40px', color: 'var(--muted)', fontSize: '16px' }}>Loading...</div>
   if (!set) return (
     <div style={{ textAlign: 'center', padding: '120px 40px' }}>
       <h2 style={{ fontFamily: 'var(--display)', fontSize: '28px', marginBottom: '10px' }}>Set not found</h2>
@@ -112,6 +119,16 @@ export default function SetDetailPage({ params }) {
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '48px 40px' }}>
+      {/* Success toast */}
+      {added && (
+        <div style={{
+          position: 'fixed', bottom: '24px', right: '24px', zIndex: 300,
+          background: 'var(--green)', color: 'white', padding: '14px 20px',
+          borderRadius: '12px', fontWeight: 700, fontSize: '14px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
+        }}>✓ Added to portfolio!</div>
+      )}
+
       {/* Breadcrumb */}
       <div style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '24px', display: 'flex', gap: '6px', alignItems: 'center' }}>
         <a href="/browse" style={{ color: 'var(--muted)', textDecoration: 'none', fontWeight: 600 }}>Browse</a>
@@ -124,7 +141,7 @@ export default function SetDetailPage({ params }) {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '32px', marginBottom: '40px' }}>
-        {/* Left: Set info */}
+        {/* Left */}
         <div>
           <div style={{
             background: 'var(--surface)', borderRadius: '16px',
@@ -133,38 +150,17 @@ export default function SetDetailPage({ params }) {
             justifyContent: 'center', marginBottom: '16px', gap: '12px',
           }}>
             {set.image_url ? (
-  <img
-    src={set.image_url}
-    alt={set.name}
-    style={{
-      width: '100%',
-      maxWidth: '220px',
-      height: '180px',
-      objectFit: 'contain',
-      borderRadius: '8px',
-    }}
-    onError={(e) => {
-      e.target.style.display = 'none';
-      e.target.nextSibling.style.display = 'block';
-    }}
-  />
-) : null}
-<div style={{
-  fontSize: '80px',
-  display: set.image_url ? 'none' : 'block'
-}}>
-  {{ 'Mega Construx': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }[set.category] || '📦'}
-</div>
+              <img src={set.image_url} alt={set.name} style={{ width: '100%', maxWidth: '220px', height: '180px', objectFit: 'contain', borderRadius: '8px' }}
+                onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'block' }}/>
+            ) : null}
+            <div style={{ fontSize: '80px', display: set.image_url ? 'none' : 'block' }}>
+              {{ 'Mega Construx': '🧱', 'Funko Pop': '👾', 'LEGO': '🏗️' }[set.category] || '📦'}
+            </div>
             {set.is_retired && (
-              <span style={{
-                fontSize: '12px', fontWeight: 700, padding: '4px 12px',
-                borderRadius: '6px', background: 'var(--red-light)', color: 'var(--red)',
-                border: '1px solid rgba(214,59,59,0.2)',
-              }}>Retired Set</span>
+              <span style={{ fontSize: '12px', fontWeight: 700, padding: '4px 12px', borderRadius: '6px', background: 'var(--red-light)', color: 'var(--red)', border: '1px solid rgba(214,59,59,0.2)' }}>Retired Set</span>
             )}
           </div>
 
-          {/* Set details */}
           <div style={{ background: 'var(--white)', borderRadius: '12px', border: '1.5px solid var(--border)', overflow: 'hidden' }}>
             {[
               { label: 'Category', value: set.category },
@@ -186,13 +182,13 @@ export default function SetDetailPage({ params }) {
             ))}
           </div>
 
-          {/* Add to portfolio / watchlist buttons */}
+          {/* Action buttons */}
           <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-            <a href="/portfolio" style={{
+            <button onClick={() => setShowPortfolioModal(true)} style={{
               flex: 1, background: 'var(--accent)', color: 'white', border: 'none',
               padding: '12px', borderRadius: '10px', fontSize: '13px', fontWeight: 700,
-              cursor: 'pointer', textDecoration: 'none', textAlign: 'center',
-            }}>+ Portfolio</a>
+              cursor: 'pointer',
+            }}>+ Portfolio</button>
             <a href="/watchlist" style={{
               flex: 1, background: 'var(--white)', color: 'var(--text)',
               border: '1.5px solid var(--border)', padding: '12px', borderRadius: '10px',
@@ -206,7 +202,6 @@ export default function SetDetailPage({ params }) {
           <h1 style={{ fontFamily: 'var(--display)', fontSize: '32px', fontWeight: 900, letterSpacing: '-1px', marginBottom: '6px', lineHeight: 1.2 }}>{set.name}</h1>
           <p style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '24px' }}>{set.category} · {set.theme} {set.set_number ? `· #${set.set_number}` : ''}</p>
 
-          {/* Price cards */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '28px' }}>
             {[
               { label: 'Avg Sale Price', value: fmt(set.avg_sale_price), sub: 'Last 90 days', highlight: true },
@@ -226,7 +221,6 @@ export default function SetDetailPage({ params }) {
             ))}
           </div>
 
-          {/* Premium over retail */}
           {change !== null && (
             <div style={{
               padding: '16px 20px', borderRadius: '12px', marginBottom: '28px',
@@ -248,7 +242,6 @@ export default function SetDetailPage({ params }) {
             </div>
           )}
 
-          {/* Chart */}
           <div style={{ background: 'var(--white)', borderRadius: '14px', border: '1.5px solid var(--border)', padding: '20px', marginBottom: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <div style={{ fontWeight: 800, fontSize: '15px' }}>Price History</div>
@@ -276,17 +269,12 @@ export default function SetDetailPage({ params }) {
                 </div>
               </>
             ) : (
-              <div style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)', fontSize: '13px' }}>
-                Not enough price history to chart yet
-              </div>
+              <div style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)', fontSize: '13px' }}>Not enough price history to chart yet</div>
             )}
           </div>
 
-          {/* Recent sales */}
           <div style={{ background: 'var(--white)', borderRadius: '14px', border: '1.5px solid var(--border)', overflow: 'hidden' }}>
-            <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', fontWeight: 800, fontSize: '15px' }}>
-              Recent eBay Sales
-            </div>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', fontWeight: 800, fontSize: '15px' }}>Recent eBay Sales</div>
             {filteredPrices.length === 0 ? (
               <div style={{ padding: '32px', textAlign: 'center', color: 'var(--muted)', fontSize: '13px' }}>No sales data yet</div>
             ) : (
@@ -316,6 +304,70 @@ export default function SetDetailPage({ params }) {
           </div>
         </div>
       </div>
+
+      {/* Add to Portfolio Modal */}
+      {showPortfolioModal && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200,
+        }} onClick={e => e.target === e.currentTarget && setShowPortfolioModal(false)}>
+          <div style={{
+            background: 'var(--white)', borderRadius: '20px', padding: '32px',
+            width: '440px', boxShadow: '0 24px 64px rgba(0,0,0,0.2)',
+          }}>
+            <h2 style={{ fontFamily: 'var(--display)', fontSize: '22px', fontWeight: 900, marginBottom: '6px' }}>Add to Portfolio</h2>
+            <p style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '24px' }}>{set.name} {set.set_number ? `· #${set.set_number}` : ''}</p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '6px' }}>Quantity</label>
+                <input type="number" min="1" value={portfolioForm.quantity}
+                  onChange={e => setPortfolioForm({ ...portfolioForm, quantity: e.target.value })}
+                  style={inputStyle}/>
+              </div>
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '6px' }}>Price Paid (each)</label>
+                <input type="number" step="0.01" placeholder={set.retail_price ? set.retail_price : '0.00'}
+                  value={portfolioForm.price_paid}
+                  onChange={e => setPortfolioForm({ ...portfolioForm, price_paid: e.target.value })}
+                  style={inputStyle}/>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '6px' }}>Condition</label>
+              <select value={portfolioForm.condition}
+                onChange={e => setPortfolioForm({ ...portfolioForm, condition: e.target.value })}
+                style={inputStyle}>
+                <option>New Sealed</option>
+                <option>Open Box</option>
+                <option>Used</option>
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '24px' }}>
+              <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '6px' }}>Notes (optional)</label>
+              <input type="text" placeholder="e.g. Got at Target clearance"
+                value={portfolioForm.notes}
+                onChange={e => setPortfolioForm({ ...portfolioForm, notes: e.target.value })}
+                style={inputStyle}/>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={() => setShowPortfolioModal(false)} style={{
+                flex: 1, padding: '12px', borderRadius: '10px', border: '1.5px solid var(--border)',
+                background: 'transparent', fontSize: '14px', fontWeight: 700, cursor: 'pointer',
+              }}>Cancel</button>
+              <button onClick={addToPortfolio} disabled={saving} style={{
+                flex: 2, padding: '12px', borderRadius: '10px', border: 'none',
+                background: saving ? 'var(--border)' : 'var(--accent)',
+                color: saving ? 'var(--muted)' : 'white',
+                fontSize: '14px', fontWeight: 700, cursor: saving ? 'default' : 'pointer',
+              }}>{saving ? 'Adding...' : 'Add to Portfolio'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

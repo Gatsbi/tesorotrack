@@ -13,24 +13,19 @@ export default function SearchPage() {
     const params = new URLSearchParams(window.location.search)
     const q = params.get('q') || ''
     setInput(q)
-    if (q) {
-      setQuery(q)
-      doSearch(q)
-    }
+    if (q) { setQuery(q); doSearch(q) }
   }, [])
 
   async function doSearch(q) {
     if (!q.trim()) return
     setLoading(true)
     setSearched(true)
-
     const { data } = await supabase
       .from('sets')
       .select('id, name, set_number, category, theme, retail_price, avg_sale_price, total_sales, is_retired, image_url')
       .or(`name.ilike.%${q}%,theme.ilike.%${q}%,set_number.ilike.%${q}%,category.ilike.%${q}%`)
       .order('total_sales', { ascending: false, nullsFirst: false })
       .limit(60)
-
     setResults(data || [])
     setLoading(false)
   }
@@ -63,28 +58,17 @@ export default function SearchPage() {
         <div style={{
           height: '140px', background: 'var(--surface)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          borderBottom: '1px solid var(--border)', position: 'relative',
-          overflow: 'hidden',
+          borderBottom: '1px solid var(--border)', position: 'relative', overflow: 'hidden',
         }}>
           {set.image_url ? (
-            <img
-              src={set.image_url}
-              alt={set.name}
+            <img src={set.image_url} alt={set.name}
               style={{ width: '100%', height: '100%', objectFit: 'contain', padding: '8px' }}
-              onError={(e) => {
-                e.target.style.display = 'none'
-                e.target.nextSibling.style.display = 'flex'
-              }}
-            />
+              onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex' }}/>
           ) : null}
           <div style={{
-            fontSize: '42px',
-            display: set.image_url ? 'none' : 'flex',
-            alignItems: 'center', justifyContent: 'center',
-            width: '100%', height: '100%',
-          }}>
-            {catIcon[set.category] || '📦'}
-          </div>
+            fontSize: '42px', display: set.image_url ? 'none' : 'flex',
+            alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%',
+          }}>{catIcon[set.category] || '📦'}</div>
           {set.is_retired && (
             <span style={{
               position: 'absolute', top: '6px', left: '6px',
@@ -94,6 +78,12 @@ export default function SearchPage() {
           )}
         </div>
         <div style={{ padding: '12px' }}>
+          {/* Set number first, then name */}
+          {set.set_number && (
+            <div style={{ fontFamily: 'var(--mono)', fontSize: '10px', fontWeight: 700, color: 'var(--accent)', marginBottom: '2px', letterSpacing: '0.5px' }}>
+              #{set.set_number}
+            </div>
+          )}
           <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600, marginBottom: '3px' }}>{set.category} · {set.theme}</div>
           <div style={{ fontSize: '13px', fontWeight: 800, lineHeight: 1.3, marginBottom: '10px' }}>{set.name}</div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -124,19 +114,14 @@ export default function SearchPage() {
         <h1 style={{ fontFamily: 'var(--display)', fontSize: '40px', fontWeight: 900, letterSpacing: '-1.5px', marginBottom: '24px' }}>
           {searched ? `Results for "${query}"` : 'Search Sets'}
         </h1>
-
         <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '10px', maxWidth: '600px' }}>
-          <input
-            type="text"
-            placeholder="Search by name, theme, or set number..."
-            value={input}
-            onChange={e => setInput(e.target.value)}
+          <input type="text" placeholder="Search by name, theme, or set number..."
+            value={input} onChange={e => setInput(e.target.value)}
             style={{
               flex: 1, padding: '14px 18px', borderRadius: '10px',
               border: '1.5px solid var(--border)', fontFamily: 'var(--sans)',
               fontSize: '15px', fontWeight: 500, outline: 'none', background: 'var(--white)',
-            }}
-          />
+            }}/>
           <button type="submit" style={{
             background: 'var(--accent)', color: 'white', border: 'none',
             padding: '14px 24px', borderRadius: '10px', fontFamily: 'var(--sans)',
@@ -174,9 +159,7 @@ export default function SearchPage() {
                 style={{
                   background: 'var(--white)', border: '1.5px solid var(--border)', borderRadius: '8px',
                   padding: '8px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', color: 'var(--text)',
-                }}>
-                {term}
-              </button>
+                }}>{term}</button>
             ))}
           </div>
         </div>
