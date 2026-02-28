@@ -10,7 +10,6 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
-// Rebrickable daily CSV downloads — no auth required
 const DOWNLOADS = {
   parts:    'https://cdn.rebrickable.com/media/downloads/parts.csv.gz',
   minifigs: 'https://cdn.rebrickable.com/media/downloads/minifigs.csv.gz',
@@ -23,12 +22,10 @@ async function downloadAndParse(url) {
   const decompressed = await gunzip(Buffer.from(buffer));
   const text = decompressed.toString('utf8');
 
-  // Parse CSV — first line is headers
   const lines = text.split('\n').filter(l => l.trim());
   const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-  
+
   return lines.slice(1).map(line => {
-    // Handle quoted fields with commas inside
     const values = [];
     let current = '';
     let inQuotes = false;
@@ -38,9 +35,8 @@ async function downloadAndParse(url) {
       else { current += ch; }
     }
     values.push(current.trim());
-    
     const row = {};
-    headers.forEach((h, i) => { row[h] = values[i] || ''; });
+    headers.forEach((h, i) => { row[h] = (values[i] || '').replace(/^"|"$/g, ''); });
     return row;
   });
 }
@@ -55,54 +51,60 @@ export async function GET(request) {
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
   const results = {};
 
-  // Process parts
+  // Process parts — ALL parts, no filtering
   if (type === 'parts' || type === 'both') {
     const rows = await downloadAndParse(DOWNLOADS.parts);
-    
-    // We only need part_num — filter to BrickLink-style alphanumeric IDs
-    // that would actually appear in eBay titles (letters + digits combos)
-    const partNums = rows
-      .map(r => r.part_num || r.Part_Num || '')
-      .filter(n => n && /^[a-z]{1,4}\d{2,6}$/i.test(n))
-      .map(n => n.toLowerCase());
 
-    results.parts = { total: rows.length, filtered: partNums.length };
+    // Keep all valid part numbers and their names/categories
+    const parts = rows
+      .filter(r => (r.part_num || r.Part_Num || '').trim())
+      .map(r => ({
+        part_num: (r.part_num || r.Part_Num || '').trim().toLowerCase(),
+        name: (r.name || r.Name || '').trim().substring(0, 255),
+        part_cat_id: parseInt(r.part_cat_id || r.Part_Cat_Id || '0') || null,
+        type: 'part',
+      }));
 
-    if (!dryRun && partNums.length > 0) {
-      // Upsert in batches of 5000
+    results.parts = { total: rows.length, toInsert: parts.length };
+
+    if (!dryRun && parts.length > 0) {
       let inserted = 0;
-      for (let i = 0; i < partNums.length; i += 5000) {
-        const batch = partNums.slice(i, i + 5000).map(part_num => ({ part_num, type: 'part' }));
+      for (let i = 0; i < parts.length; i += 5000) {
+        const batch = parts.slice(i, i + 5000);
         const { error } = await supabase
           .from('lego_parts')
-          .upsert(batch, { onConflict: 'part_num', ignoreDuplicates: true });
+          .upsert(batch, { onConflict: 'part_num', ignoreDuplicates: false });
         if (!error) inserted += batch.length;
+        else results.parts.lastError = error.message;
       }
       results.parts.inserted = inserted;
     }
   }
 
-  // Process minifigs
+  // Process minifigs — ALL minifigs
   if (type === 'minifigs' || type === 'both') {
     const rows = await downloadAndParse(DOWNLOADS.minifigs);
 
-    // Minifig IDs look like "sw1088", "hp0001", "col001", "fig-000001"
-    // We want the fig_num field which is the BrickLink-style ID
-    const figNums = rows
-      .map(r => r.fig_num || r.Fig_Num || '')
-      .filter(n => n && n.length > 2)
-      .map(n => n.toLowerCase());
+    const minifigs = rows
+      .filter(r => (r.fig_num || r.Fig_Num || '').trim())
+      .map(r => ({
+        part_num: (r.fig_num || r.Fig_Num || '').trim().toLowerCase(),
+        name: (r.name || r.Name || '').trim().substring(0, 255),
+        part_cat_id: null,
+        type: 'minifig',
+      }));
 
-    results.minifigs = { total: rows.length, filtered: figNums.length };
+    results.minifigs = { total: rows.length, toInsert: minifigs.length };
 
-    if (!dryRun && figNums.length > 0) {
+    if (!dryRun && minifigs.length > 0) {
       let inserted = 0;
-      for (let i = 0; i < figNums.length; i += 5000) {
-        const batch = figNums.slice(i, i + 5000).map(part_num => ({ part_num, type: 'minifig' }));
+      for (let i = 0; i < minifigs.length; i += 5000) {
+        const batch = minifigs.slice(i, i + 5000);
         const { error } = await supabase
           .from('lego_parts')
-          .upsert(batch, { onConflict: 'part_num', ignoreDuplicates: true });
+          .upsert(batch, { onConflict: 'part_num', ignoreDuplicates: false });
         if (!error) inserted += batch.length;
+        else results.minifigs.lastError = error.message;
       }
       results.minifigs.inserted = inserted;
     }
@@ -113,6 +115,6 @@ export async function GET(request) {
     dryRun,
     type,
     results,
-    note: dryRun ? 'Run without ?dry=true to actually import' : 'Import complete',
+    note: dryRun ? 'Run without ?dry=true to import' : 'Import complete',
   });
 }
