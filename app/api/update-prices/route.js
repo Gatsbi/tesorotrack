@@ -100,7 +100,7 @@ function parseItem(item, setId, setNumber, category) {
   // Skip accessories, add-ons, and unrelated items
   const skipKeywords = [
     'lot of', 'bundle', 'parts only', 'instructions only', 'incomplete',
-    'custom', 'minifig only', 'minifigure only', 'pieces only',
+    'custom', 'pieces only',
     'light kit', 'led kit', 'led light', 'lighting kit', 'lights kit',
     'led kit for', 'light set for',
     'sticker', 'stickers', 'decal', 'decals',
@@ -112,6 +112,17 @@ function parseItem(item, setId, setNumber, category) {
     'mystery bag', 'blind bag',
   ];
   if (skipKeywords.some(kw => titleLower.includes(kw))) return null;
+
+  // Skip individual minifigure/part listings
+  // Catches: "minifig", "minifigure", "mini fig", "mini figure", "figure only", "from set"
+  // Also catches BrickLink part IDs like sw1088, hp0123, cas123 appearing alongside set numbers
+  const minifigPattern = /\bminifig(ure)?s?\b|\bmini[- ]?fig(ure)?s?\b|\bfigure only\b|\bfrom set\b/i;
+  if (minifigPattern.test(title)) return null;
+
+  // Catch BrickLink-style part IDs (2-4 letters + 3-5 digits, e.g. sw1088, hp0234, cas456)
+  // If a part ID appears in the title alongside the set number, it's a parts listing
+  const partIdPattern = /\b[a-z]{2,4}\d{3,5}\b/i;
+  if (partIdPattern.test(title)) return null;
 
 
   // Require set number in title — must not be embedded inside a larger number
