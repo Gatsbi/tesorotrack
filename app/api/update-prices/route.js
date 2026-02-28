@@ -136,9 +136,13 @@ function parseItem(item, setId, setNumber, category) {
     if (!embeddedCheck.test(title)) return null;
   }
 
-  // Reject multi-set bundle listings like "75273 + 75274" or "75273 & 76440"
-  // Uses joining words/symbols to avoid false positives from years, piece counts, etc.
+  // Reject multi-set bundle listings
+  // Strategy 1: 3+ five/six digit numbers in title = almost certainly a bundle
+  // Strategy 2: two set numbers joined by a separator word/symbol
   if (setNumber && /^\d{5,6}$/.test(setNumber)) {
+    const allSetNums = title.match(/\b\d{5,6}\b/g) || [];
+    const otherNums = allSetNums.filter(n => n !== setNumber);
+    if (otherNums.length >= 2) return null;
     const bundlePattern = /\b\d{5,6}\b\s*(?:\+|&|and|w\/|with|\|)\s*\b\d{5,6}\b/i;
     if (bundlePattern.test(title)) return null;
   }
