@@ -28,6 +28,7 @@ export default function AdminPage() {
   const [startTime, setStartTime] = useState(null)
   const [elapsed, setElapsed] = useState(0)
   const [savedProgress, setSavedProgress] = useState(null) // resumed state
+  const [purgeMode, setPurgeMode] = useState(false)
   const stopRef = useRef(false)
   const logEndRef = useRef(null)
 
@@ -159,7 +160,7 @@ export default function AdminPage() {
 
       let data
       try {
-        const res = await fetch(`/api/update-prices?batch=${batch}&size=${BATCH_SIZE}`)
+        const res = await fetch(`/api/update-prices?batch=${batch}&size=${BATCH_SIZE}${purgeMode ? '&purge=true' : ''}`)
         data = await res.json()
       } catch (e) {
         addLog(`❌ Batch ${batch + 1} failed: ${e.message}`, 'error')
@@ -387,15 +388,29 @@ export default function AdminPage() {
           {/* Buttons */}
           <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
             {!savedProgress && (
-              <button onClick={() => runAll(0, { saved: 0, updated: 0 })} disabled={running} style={{
-                padding: '12px 28px', borderRadius: '10px', border: 'none',
-                background: running ? 'var(--border)' : 'var(--accent)',
-                color: running ? 'var(--muted)' : 'white',
-                fontSize: '14px', fontWeight: 700, cursor: running ? 'default' : 'pointer',
-                boxShadow: running ? 'none' : '0 4px 14px rgba(200,82,42,0.3)',
-              }}>
-                {running ? '⏳ Running...' : done ? '🔄 Run Again' : '▶ Run Price Update'}
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <button onClick={() => runAll(0, { saved: 0, updated: 0 })} disabled={running} style={{
+                  padding: '12px 28px', borderRadius: '10px', border: 'none',
+                  background: running ? 'var(--border)' : 'var(--accent)',
+                  color: running ? 'var(--muted)' : 'white',
+                  fontSize: '14px', fontWeight: 700, cursor: running ? 'default' : 'pointer',
+                  boxShadow: running ? 'none' : '0 4px 14px rgba(200,82,42,0.3)',
+                }}>
+                  {running ? '⏳ Running...' : done ? '🔄 Run Again' : '▶ Run Price Update'}
+                </button>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '7px', cursor: running ? 'default' : 'pointer', userSelect: 'none' }}>
+                  <input
+                    type="checkbox"
+                    checked={purgeMode}
+                    disabled={running}
+                    onChange={e => setPurgeMode(e.target.checked)}
+                    style={{ width: '16px', height: '16px', accentColor: 'var(--accent)', cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: purgeMode ? 'var(--red)' : 'var(--muted)' }}>
+                    {purgeMode ? '🗑 Purge & replace existing prices' : 'Purge & replace existing prices'}
+                  </span>
+                </label>
+              </div>
             )}
             {running && (
               <button onClick={() => { stopRef.current = true }} style={{ padding: '12px 20px', borderRadius: '10px', border: '1.5px solid var(--border)', background: 'transparent', fontSize: '14px', fontWeight: 700, cursor: 'pointer', color: 'var(--muted)' }}>
