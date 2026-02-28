@@ -32,15 +32,26 @@ export default function SearchPage() {
     setLoading(true)
     setSearched(true)
 
-    const { count } = await supabase
-      .from('sets')
-      .select('*', { count: 'exact', head: true })
-      .or(`name.ilike.%${q}%,theme.ilike.%${q}%,set_number.ilike.%${q}%,category.ilike.%${q}%`)
+    // Split into words and require ALL words to match somewhere in the searchable fields
+    const words = q.trim().split(/\s+/).filter(Boolean)
 
-    const { data } = await supabase
-      .from('sets')
+    const buildFilter = (words) =>
+      words.map(w => `name.ilike.%${w}%,theme.ilike.%${w}%,set_number.ilike.%${w}%,category.ilike.%${w}%`).join(',')
+
+    // For multi-word queries, chain .or() per word so ALL words must match
+    let countQuery = supabase.from('sets').select('*', { count: 'exact', head: true })
+    let dataQuery = supabase.from('sets')
       .select('id, name, set_number, category, theme, retail_price, avg_sale_price, new_avg_price, total_sales, is_retired, image_url')
-      .or(`name.ilike.%${q}%,theme.ilike.%${q}%,set_number.ilike.%${q}%,category.ilike.%${q}%`)
+
+    for (const word of words) {
+      const filter = `name.ilike.%${word}%,theme.ilike.%${word}%,set_number.ilike.%${word}%,category.ilike.%${word}%`
+      countQuery = countQuery.or(filter)
+      dataQuery = dataQuery.or(filter)
+    }
+
+    const { count } = await countQuery
+
+    const { data } = await dataQuery
       .order('total_sales', { ascending: false, nullsFirst: false })
       .limit(500)
 
