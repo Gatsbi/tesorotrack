@@ -104,28 +104,39 @@ async function searchFindingAPI(query) {
   }));
 }
 
-// Browse API fallback — active/recent listings only, no deep history
+// Browse API — fetch multiple pages and sort by end date for best coverage
 async function searchBrowseAPI(query, token) {
-  const params = new URLSearchParams({
-    q: query,
-    filter: 'conditions:{NEW|USED},buyingOptions:{FIXED_PRICE|AUCTION}',
-    limit: '100',
-    sort: 'newlyListed',
-  });
-  const res = await fetch(
-    `https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`,
-    {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
-        'Accept': 'application/json',
-      },
-      signal: AbortSignal.timeout(10000),
-    }
-  );
-  if (!res.ok) throw new Error(`Browse API HTTP ${res.status}`);
-  const data = await res.json();
-  return data.itemSummaries || [];
+  const allItems = [];
+  const offsets = [0, 100, 200]; // 3 pages = up to 300 listings
+
+  for (const offset of offsets) {
+    const params = new URLSearchParams({
+      q: query,
+      filter: 'conditions:{NEW|USED},buyingOptions:{FIXED_PRICE|AUCTION}',
+      limit: '100',
+      offset: String(offset),
+      sort: 'endingSoonest', // gets oldest-ending first for date spread
+    });
+    const res = await fetch(
+      `https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
+          'Accept': 'application/json',
+        },
+        signal: AbortSignal.timeout(10000),
+      }
+    );
+    if (!res.ok) break;
+    const data = await res.json();
+    const items = data.itemSummaries || [];
+    allItems.push(...items);
+    if (items.length < 100) break; // no more pages
+    await sleep(200);
+  }
+
+  return allItems;
 }
 
 async function searchBySetNumber(set, token) {
