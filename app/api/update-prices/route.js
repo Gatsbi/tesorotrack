@@ -44,63 +44,54 @@ function buildQuery(set) {
 }
 
 // eBay Finding API — returns completed/sold listings up to 90 days back
-async function searchBySetNumber(set, token) {
-  const query = buildQuery(set);
-  const FINDING_APP_ID = EBAY_CLIENT_ID;
-
+async function searchFindingAPI(query) {
   const allItems = [];
   let pageNum = 1;
   let totalPages = 1;
 
-  // Fetch up to 3 pages (300 sold listings per set)
   while (pageNum <= Math.min(totalPages, 3)) {
-    const params = new URLSearchParams({
-      'OPERATION-NAME': 'findCompletedItems',
-      'SERVICE-VERSION': '1.13.0',
-      'SECURITY-APPNAME': FINDING_APP_ID,
-      'RESPONSE-DATA-FORMAT': 'JSON',
-      'keywords': query,
-      'categoryId': '19169', // Toys & Hobbies > Building Toys
-      'itemFilter(0).name': 'SoldItemsOnly',
-      'itemFilter(0).value': 'true',
-      'itemFilter(1).name': 'ListingType',
-      'itemFilter(1).value(0)': 'FixedPrice',
-      'itemFilter(1).value(1)': 'Auction',
-      'itemFilter(1).value(2)': 'AuctionWithBIN',
-      'sortOrder': 'EndTimeSoonest',
-      'paginationInput.entriesPerPage': '100',
-      'paginationInput.pageNumber': String(pageNum),
-    });
+    // Build query string manually — URLSearchParams encodes parens which breaks Finding API
+    const qs = [
+      'OPERATION-NAME=findCompletedItems',
+      'SERVICE-VERSION=1.13.0',
+      `SECURITY-APPNAME=${encodeURIComponent(EBAY_CLIENT_ID)}`,
+      'RESPONSE-DATA-FORMAT=JSON',
+      `keywords=${encodeURIComponent(query)}`,
+      'itemFilter(0).name=SoldItemsOnly',
+      'itemFilter(0).value=true',
+      'itemFilter(1).name=ListingType',
+      'itemFilter(1).value(0)=FixedPrice',
+      'itemFilter(1).value(1)=Auction',
+      'itemFilter(1).value(2)=AuctionWithBIN',
+      'sortOrder=EndTimeSoonest',
+      'paginationInput.entriesPerPage=100',
+      `paginationInput.pageNumber=${pageNum}`,
+    ].join('&');
 
-    try {
-      const res = await fetch(
-        `https://svcs.ebay.com/services/search/FindingService/v1?${params}`,
-        { signal: AbortSignal.timeout(12000) }
-      );
-      if (!res.ok) {
-        const errText = await res.text();
-        return { error: `Finding API ${res.status}: ${errText.substring(0, 200)}` };
-      }
-      const data = await res.json();
-      const root = data?.findCompletedItemsResponse?.[0];
-      if (root?.ack?.[0] !== 'Success' && root?.ack?.[0] !== 'Warning') {
-        const errMsg = root?.errorMessage?.[0]?.error?.[0]?.message?.[0] || 'Unknown error';
-        return { error: `Finding API: ${errMsg}` };
-      }
-      const paginationOutput = root?.paginationOutput?.[0];
-      totalPages = parseInt(paginationOutput?.totalPages?.[0] || '1');
-      const entries = root?.searchResult?.[0]?.item || [];
-      allItems.push(...entries);
-    } catch (e) {
-      return { error: e.message };
+    const res = await fetch(
+      `https://svcs.ebay.com/services/search/FindingService/v1?${qs}`,
+      { signal: AbortSignal.timeout(15000) }
+    );
+
+    if (!res.ok) throw new Error(`Finding API HTTP ${res.status}`);
+
+    const data = await res.json();
+    const root = data?.findCompletedItemsResponse?.[0];
+    const ack = root?.ack?.[0];
+    if (ack !== 'Success' && ack !== 'Warning') {
+      const errMsg = root?.errorMessage?.[0]?.error?.[0]?.message?.[0] || 'Unknown';
+      throw new Error(`Finding API ack=${ack}: ${errMsg}`);
     }
 
+    totalPages = parseInt(root?.paginationOutput?.[0]?.totalPages?.[0] || '1');
+    const entries = root?.searchResult?.[0]?.item || [];
+    allItems.push(...entries);
+
     pageNum++;
-    if (pageNum <= Math.min(totalPages, 3)) await sleep(200);
+    if (pageNum <= Math.min(totalPages, 3)) await sleep(300);
   }
 
-  // Normalize Finding API item shape to match what parseItem expects
-  const normalized = allItems.map(item => ({
+  return allItems.map(item => ({
     itemId: item.itemId?.[0],
     title: item.title?.[0] || '',
     price: { value: item.sellingStatus?.[0]?.currentPrice?.[0]?.['__value__'] || '0' },
@@ -108,11 +99,51 @@ async function searchBySetNumber(set, token) {
     itemEndDate: item.listingInfo?.[0]?.endTime?.[0],
     itemCreationDate: item.listingInfo?.[0]?.startTime?.[0],
     itemWebUrl: item.viewItemURL?.[0] || '',
-    thumbnailImages: item.galleryURL ? [{ imageUrl: item.galleryURL[0] }] : [],
     image: item.galleryURL ? { imageUrl: item.galleryURL[0] } : null,
+    thumbnailImages: item.galleryURL ? [{ imageUrl: item.galleryURL[0] }] : [],
   }));
+}
 
-  return { items: normalized, total: allItems.length };
+// Browse API fallback — active/recent listings only, no deep history
+async function searchBrowseAPI(query, token) {
+  const params = new URLSearchParams({
+    q: query,
+    filter: 'conditions:{NEW|USED},buyingOptions:{FIXED_PRICE|AUCTION}',
+    limit: '100',
+    sort: 'newlyListed',
+  });
+  const res = await fetch(
+    `https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`,
+    {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
+        'Accept': 'application/json',
+      },
+      signal: AbortSignal.timeout(10000),
+    }
+  );
+  if (!res.ok) throw new Error(`Browse API HTTP ${res.status}`);
+  const data = await res.json();
+  return data.itemSummaries || [];
+}
+
+async function searchBySetNumber(set, token) {
+  const query = buildQuery(set);
+
+  // Try Finding API first (90-day sold history)
+  try {
+    const items = await searchFindingAPI(query);
+    return { items, total: items.length, source: 'finding' };
+  } catch (findingErr) {
+    // Fall back to Browse API if Finding API fails
+    try {
+      const items = await searchBrowseAPI(query, token);
+      return { items, total: items.length, source: 'browse', warning: `Finding API failed: ${findingErr.message}` };
+    } catch (browseErr) {
+      return { error: `Both APIs failed. Finding: ${findingErr.message} | Browse: ${browseErr.message}` };
+    }
+  }
 }
 
 function parseSaleDate(item) {
@@ -336,6 +367,8 @@ export async function GET(request) {
     log.push({
       set: set.name,
       setNumber: set.set_number,
+      source: result.source || 'unknown',
+      warning: result.warning,
       ebayTotal: result.total,
       matched: prices.length,
       skippedMultiSet,
