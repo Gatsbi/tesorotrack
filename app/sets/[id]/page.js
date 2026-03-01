@@ -435,7 +435,7 @@ export default function SetDetailPage({ params }) {
             ) : (
               <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
                 {filteredPrices.slice(-50).reverse().map((p, i) => {
-                  const ebayUrl = p.ebay_item_id ? `https://www.ebay.com/itm/${p.ebay_item_id.replace(/_/g, '|').split('|')[0]}` : null
+                  const ebayUrl = p.ebay_item_id ? `https://www.ebay.com/itm/${p.ebay_item_id.split('_')[1] || p.ebay_item_id}` : null
                   const condBg = p.condition === 'New Sealed' ? 'var(--green-light)' : p.condition === 'Open Box' ? 'var(--yellow-light)' : 'var(--surface)'
                   const condColor = p.condition === 'New Sealed' ? 'var(--green)' : p.condition === 'Open Box' ? 'var(--yellow)' : 'var(--muted)'
                   const row = (
