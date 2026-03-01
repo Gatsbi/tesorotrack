@@ -16,7 +16,8 @@ export default function SetDetailPage({ params }) {
   const [added, setAdded] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
 
-  useEffect(() => { loadSet(); checkAdmin() }, [])
+  useEffect(() => { loadSet() }, [])
+  useEffect(() => { checkAdmin() }, [user])
 
   async function loadSet() {
     const { data: setData } = await supabase
