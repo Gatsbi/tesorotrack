@@ -220,14 +220,14 @@ function parseItem(item, setId, setNumber, category) {
   }
 
   // Reject multi-set bundle listings
-  // Strategy 1: 3+ five/six digit numbers in title = almost certainly a bundle
-  // Strategy 2: two set numbers joined by a separator word/symbol
+  // Extract all 5-6 digit numbers regardless of surrounding punctuation (parens, slashes, etc.)
   if (setNumber && /^\d{5,6}$/.test(setNumber)) {
-    const allSetNums = title.match(/\b\d{5,6}\b/g) || [];
+    const allSetNums = title.match(/\d{5,6}/g) || [];
     const otherNums = allSetNums.filter(n => n !== setNumber);
+    // 2+ other set-like numbers = bundle (e.g. "(43223) Asha (30646) (30661) (41151)")
     if (otherNums.length >= 2) return null;
-    const bundlePattern = /\b\d{5,6}\b\s*(?:\+|&|and|w\/|with|\|)\s*\b\d{5,6}\b/i;
-    if (bundlePattern.test(title)) return null;
+    // Two set numbers joined by any separator
+    if (/\d{5,6}[\s()]*(?:\+|&|and|w\/|with|\||\/|,)[\s()]*\d{5,6}/i.test(title)) return null;
   }
 
   const conditionId = item?.conditionId || '';
