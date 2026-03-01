@@ -44,21 +44,17 @@ function buildQuery(set) {
 }
 
 
-// Browse API — fetch recently-ended listings (past 90 days) using itemEndDate filter
+// Browse API — fetch up to 300 recently ended listings
 async function searchBrowseAPI(query, token) {
   const allItems = [];
-  // Get items that ended in the past (sold) — up to 90 days back
-  const now = new Date();
-  const past90 = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-  const endDateFilter = `itemEndDate:[${past90.toISOString().split('.')[0]}Z..${now.toISOString().split('.')[0]}Z]`;
 
   for (const offset of [0, 100, 200]) {
     const params = new URLSearchParams({
       q: query,
-      filter: `conditions:{NEW|USED},buyingOptions:{FIXED_PRICE|AUCTION},${endDateFilter}`,
+      filter: 'conditions:{NEW|USED},buyingOptions:{FIXED_PRICE|AUCTION}',
       limit: '100',
       offset: String(offset),
-      sort: 'endTimeSoonest',
+      sort: 'endTimeSoonest', // surfaces recently-ended listings first
     });
     const res = await fetch(
       `https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`,
@@ -154,14 +150,14 @@ function parseItem(item, setId, setNumber, category) {
   }
 
   // Reject multi-set bundle listings
-  // Extract all 5-6 digit numbers regardless of surrounding punctuation (parens, slashes, etc.)
   if (setNumber && /^\d{5,6}$/.test(setNumber)) {
     const allSetNums = title.match(/\d{5,6}/g) || [];
     const otherNums = allSetNums.filter(n => n !== setNumber);
-    // 2+ other set-like numbers = bundle (e.g. "(43223) Asha (30646) (30661) (41151)")
+    // 2+ other set-like numbers = definitely a bundle
     if (otherNums.length >= 2) return null;
-    // Two set numbers joined by any separator
-    if (/\d{5,6}[\s()]*(?:\+|&|and|w\/|with|\||\/|,)[\s()]*\d{5,6}/i.test(title)) return null;
+    // 1 other set number + any bundle separator anywhere in title = 2-set bundle
+    // e.g. "43231 Asha's Cottage + 43223 Asha In The City"
+    if (otherNums.length >= 1 && /\+|&|\band\b|w\/|with|\||\//.test(title)) return null;
   }
 
   const conditionId = item?.conditionId || '';
