@@ -101,13 +101,22 @@ export default function SetDetailPage({ params }) {
           }
         })
     } else {
-      const sorted = [...priceList].sort((a, b) => parseFloat(a.sale_price) - parseFloat(b.sale_price))
+      // Sort by date first, fall back to price if no dates
+      const sorted = [...priceList].sort((a, b) => {
+        if (a.sale_date && b.sale_date) return a.sale_date.localeCompare(b.sale_date)
+        return parseFloat(a.sale_price) - parseFloat(b.sale_price)
+      })
       const bucketSize = Math.max(1, Math.floor(sorted.length / 8))
       const buckets = []
       for (let i = 0; i < sorted.length; i += bucketSize) {
         const chunk = sorted.slice(i, i + bucketSize)
         const avg = chunk.reduce((s, p) => s + parseFloat(p.sale_price), 0) / chunk.length
-        buckets.push({ label: `${i + 1}`, avg, count: chunk.length })
+        // Use the date of the middle item in the bucket as label
+        const mid = chunk[Math.floor(chunk.length / 2)]
+        const label = mid.sale_date
+          ? new Date(mid.sale_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          : `#${i + 1}`
+        buckets.push({ label, avg, count: chunk.length })
       }
       return buckets
     }
@@ -361,9 +370,13 @@ export default function SetDetailPage({ params }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <div>
                 <div style={{ fontWeight: 800, fontSize: '15px' }}>Price History</div>
-                {allSameDate && chartPoints.length >= 2 && (
-                  <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>Showing price distribution — run price update to get timeline data</div>
-                )}
+                {chartPoints.length >= 2 && (() => {
+                  const dates = filteredPrices.map(p => p.sale_date).filter(Boolean).sort()
+                  if (!dates.length) return null
+                  const first = new Date(dates[0]).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+                  const last = new Date(dates[dates.length - 1]).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+                  return <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>{first === last ? first : `${first} – ${last}`} · {filteredPrices.length} sales</div>
+                })()}
                 {conditionFilter !== 'All' && (
                   <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>Filtered: {conditionFilter} · stats cards updated above</div>
                 )}
