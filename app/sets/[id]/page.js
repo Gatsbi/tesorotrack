@@ -89,11 +89,17 @@ export default function SetDetailPage({ params }) {
       })
       return Object.entries(monthlyData)
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([month, vals]) => ({
-          label: month.substring(5),
-          avg: vals.reduce((s, v) => s + v, 0) / vals.length,
-          count: vals.length,
-        }))
+        .map(([month, vals]) => {
+          const [year, mon] = month.split('-')
+          const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+          const label = `${monthNames[parseInt(mon) - 1]} '${year.substring(2)}`
+          return {
+            label,
+            month,
+            avg: vals.reduce((s, v) => s + v, 0) / vals.length,
+            count: vals.length,
+          }
+        })
     } else {
       const sorted = [...priceList].sort((a, b) => parseFloat(a.sale_price) - parseFloat(b.sale_price))
       const bucketSize = Math.max(1, Math.floor(sorted.length / 8))
@@ -114,26 +120,77 @@ export default function SetDetailPage({ params }) {
     if (points.length < 2) return null
     const vals = points.map(p => p.avg)
     const min = Math.min(...vals), max = Math.max(...vals), range = max - min || 1
-    const w = 600, h = 120, pad = 20
-    const coords = points.map((p, i) => ({
-      x: pad + (i / (points.length - 1)) * (w - pad * 2),
-      y: h - pad - ((p.avg - min) / range) * (h - pad * 2),
-    }))
-    const path = coords.map((c, i) => `${i === 0 ? 'M' : 'L'}${c.x},${c.y}`).join(' ')
-    const area = `${path} L${coords[coords.length-1].x},${h} L${coords[0].x},${h} Z`
+    const w = 580, h = 160, padL = 52, padR = 16, padT = 16, padB = 32
+    const chartW = w - padL - padR
+    const chartH = h - padT - padB
     const rising = vals[vals.length - 1] >= vals[0]
+    const color = rising ? '#1a9e6e' : '#d63b3b'
+
+    const coords = points.map((p, i) => ({
+      x: padL + (i / (points.length - 1)) * chartW,
+      y: padT + (1 - (p.avg - min) / range) * chartH,
+      avg: p.avg,
+      label: p.label,
+      count: p.count,
+    }))
+
+    const path = coords.map((c, i) => `${i === 0 ? 'M' : 'L'}${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ')
+    const area = `${path} L${coords[coords.length-1].x.toFixed(1)},${(padT + chartH).toFixed(1)} L${coords[0].x.toFixed(1)},${(padT + chartH).toFixed(1)} Z`
+
+    // Y-axis: 4 price gridlines
+    const yTicks = [0, 0.33, 0.66, 1].map(t => ({
+      y: padT + (1 - t) * chartH,
+      val: min + t * range,
+    }))
+
+    // X-axis: show first, last, and evenly spaced labels (max 6)
+    const maxLabels = 6
+    const step = points.length <= maxLabels ? 1 : Math.ceil(points.length / maxLabels)
+    const xLabelIndices = new Set()
+    for (let i = 0; i < points.length; i += step) xLabelIndices.add(i)
+    xLabelIndices.add(points.length - 1)
+
     return (
-      <svg viewBox={`0 0 ${w} ${h}`} style={{ width: '100%', height: '160px' }}>
+      <svg viewBox={`0 0 ${w} ${h}`} style={{ width: '100%', height: '200px' }}>
         <defs>
           <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={rising ? '#1a9e6e' : '#d63b3b'} stopOpacity="0.2"/>
-            <stop offset="100%" stopColor={rising ? '#1a9e6e' : '#d63b3b'} stopOpacity="0"/>
+            <stop offset="0%" stopColor={color} stopOpacity="0.18"/>
+            <stop offset="100%" stopColor={color} stopOpacity="0"/>
           </linearGradient>
         </defs>
+
+        {/* Y gridlines and labels */}
+        {yTicks.map((t, i) => (
+          <g key={i}>
+            <line x1={padL} y1={t.y.toFixed(1)} x2={w - padR} y2={t.y.toFixed(1)}
+              stroke="var(--border)" strokeWidth="1" strokeDasharray="3,3"/>
+            <text x={padL - 6} y={t.y + 4} textAnchor="end"
+              fontSize="9" fill="var(--muted)" fontFamily="monospace">
+              ${Math.round(t.val)}
+            </text>
+          </g>
+        ))}
+
+        {/* Area fill */}
         <path d={area} fill="url(#chartGrad)"/>
-        <path d={path} fill="none" stroke={rising ? '#1a9e6e' : '#d63b3b'} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+
+        {/* Line */}
+        <path d={path} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+
+        {/* Dots with tooltip */}
         {coords.map((c, i) => (
-          <circle key={i} cx={c.x} cy={c.y} r="4" fill={rising ? '#1a9e6e' : '#d63b3b'} opacity="0.6"/>
+          <g key={i}>
+            <circle cx={c.x.toFixed(1)} cy={c.y.toFixed(1)} r="4" fill={color} opacity="0.7"/>
+            <title>${c.avg.toFixed(2)} · {c.count} sale{c.count !== 1 ? 's' : ''} · {c.label}</title>
+          </g>
+        ))}
+
+        {/* X-axis labels */}
+        {coords.map((c, i) => xLabelIndices.has(i) && (
+          <text key={i} x={c.x.toFixed(1)} y={h - 4} textAnchor="middle"
+            fontSize="9" fill="var(--muted)" fontFamily="monospace">
+            {c.label}
+          </text>
         ))}
       </svg>
     )
@@ -326,15 +383,7 @@ export default function SetDetailPage({ params }) {
             {chartPoints.length >= 2 ? (
               <>
                 <SparkLine points={chartPoints} />
-                {!allSameDate && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px' }}>
-                    {chartPoints.map(p => (
-                      <div key={p.label} style={{ textAlign: 'center' }}>
-                        <div style={{ fontSize: '9px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>{p.label}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+
               </>
             ) : (
               <div style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)', fontSize: '13px' }}>
