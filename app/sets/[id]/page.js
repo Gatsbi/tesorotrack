@@ -14,8 +14,9 @@ export default function SetDetailPage({ params }) {
   const [portfolioForm, setPortfolioForm] = useState({ quantity: 1, price_paid: '', condition: 'New Sealed', notes: '' })
   const [saving, setSaving] = useState(false)
   const [added, setAdded] = useState(false)
+  const [isAdmin, setIsAdmin] = useState(false)
 
-  useEffect(() => { loadSet() }, [])
+  useEffect(() => { loadSet(); checkAdmin() }, [])
 
   async function loadSet() {
     const { data: setData } = await supabase
@@ -26,6 +27,12 @@ export default function SetDetailPage({ params }) {
       .order('sale_date', { ascending: true }).limit(500)
     setPrices(priceData || [])
     setLoading(false)
+  }
+
+  async function checkAdmin() {
+    if (!user) return
+    const { data } = await supabase.from('profiles').select('is_admin').eq('id', user.id).single()
+    if (data?.is_admin) setIsAdmin(true)
   }
 
   async function addToPortfolio() {
@@ -427,26 +434,38 @@ export default function SetDetailPage({ params }) {
               <div style={{ padding: '32px', textAlign: 'center', color: 'var(--muted)', fontSize: '13px' }}>No sales data yet</div>
             ) : (
               <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
-                {filteredPrices.slice(-50).reverse().map((p, i) => (
-                  <div key={i} style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    padding: '10px 20px', borderBottom: '1px solid var(--border)',
-                    background: i % 2 === 0 ? 'var(--white)' : 'var(--bg)',
-                  }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '2px', color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.listing_title?.substring(0, 60)}...</div>
-                      <div style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>{p.sale_date}</div>
+                {filteredPrices.slice(-50).reverse().map((p, i) => {
+                  const ebayUrl = p.ebay_item_id ? `https://www.ebay.com/itm/${p.ebay_item_id.replace(/_/g, '|').split('|')[0]}` : null
+                  const condBg = p.condition === 'New Sealed' ? 'var(--green-light)' : p.condition === 'Open Box' ? 'var(--yellow-light)' : 'var(--surface)'
+                  const condColor = p.condition === 'New Sealed' ? 'var(--green)' : p.condition === 'Open Box' ? 'var(--yellow)' : 'var(--muted)'
+                  const row = (
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '10px 20px', borderBottom: '1px solid var(--border)',
+                      background: i % 2 === 0 ? 'var(--white)' : 'var(--bg)',
+                      cursor: isAdmin && ebayUrl ? 'pointer' : 'default',
+                      transition: 'background 0.15s',
+                    }}
+                      onMouseEnter={e => { if (isAdmin && ebayUrl) e.currentTarget.style.background = 'var(--surface)' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = i % 2 === 0 ? 'var(--white)' : 'var(--bg)' }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '2px', color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {p.listing_title?.substring(0, 60)}...
+                          {isAdmin && ebayUrl && <span style={{ marginLeft: '6px', fontSize: '10px', color: 'var(--accent)', fontWeight: 700 }}>↗</span>}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>{p.sale_date}</div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
+                        <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '5px', background: condBg, color: condColor }}>{p.condition}</span>
+                        <span style={{ fontFamily: 'var(--mono)', fontSize: '14px', fontWeight: 600 }}>${parseFloat(p.sale_price).toFixed(2)}</span>
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
-                      <span style={{
-                        fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '5px',
-                        background: p.condition === 'New Sealed' ? 'var(--green-light)' : p.condition === 'Open Box' ? 'var(--yellow-light)' : 'var(--surface)',
-                        color: p.condition === 'New Sealed' ? 'var(--green)' : p.condition === 'Open Box' ? 'var(--yellow)' : 'var(--muted)',
-                      }}>{p.condition}</span>
-                      <span style={{ fontFamily: 'var(--mono)', fontSize: '14px', fontWeight: 600 }}>${parseFloat(p.sale_price).toFixed(2)}</span>
-                    </div>
-                  </div>
-                ))}
+                  )
+                  return isAdmin && ebayUrl
+                    ? <a key={i} href={ebayUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>{row}</a>
+                    : <div key={i}>{row}</div>
+                })}
               </div>
             )}
           </div>
