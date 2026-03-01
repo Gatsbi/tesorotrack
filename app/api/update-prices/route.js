@@ -104,36 +104,87 @@ async function searchFindingAPI(query) {
   }));
 }
 
-// Browse API — fetch multiple pages and sort by end date for best coverage
-async function searchBrowseAPI(query, token) {
+// Scrape eBay completed/sold listings page — returns actually sold items with real sale dates
+async function searchSoldListings(query) {
   const allItems = [];
-  const offsets = [0, 100, 200]; // 3 pages = up to 300 listings
 
-  for (const offset of offsets) {
+  for (let page = 1; page <= 3; page++) {
     const params = new URLSearchParams({
-      q: query,
-      filter: 'conditions:{NEW|USED},buyingOptions:{FIXED_PRICE|AUCTION}',
-      limit: '100',
-      offset: String(offset),
-      sort: 'endingSoonest', // gets oldest-ending first for date spread
+      _nkw: query,
+      LH_Sold: '1',       // sold listings only
+      LH_Complete: '1',   // completed listings
+      _sop: '13',         // sort by most recently sold
+      _ipg: '240',        // 240 results per page (max)
+      _pgn: String(page),
     });
+
     const res = await fetch(
-      `https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`,
+      `https://www.ebay.com/sch/i.html?${params}`,
       {
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
-          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'en-US,en;q=0.9',
         },
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(15000),
       }
     );
+
     if (!res.ok) break;
-    const data = await res.json();
-    const items = data.itemSummaries || [];
-    allItems.push(...items);
-    if (items.length < 100) break; // no more pages
-    await sleep(200);
+    const html = await res.text();
+
+    // Parse listings from HTML
+    // Each sold listing has data-view="mi:1686|iid:..." and a green sold price
+    const itemBlocks = html.split('s-item__wrapper').slice(1);
+
+    let foundOnPage = 0;
+    for (const block of itemBlocks) {
+      // Extract item ID
+      const idMatch = block.match(/\/itm\/(\d+)/) || block.match(/iid:(\d+)/);
+      if (!idMatch) continue;
+      const itemId = idMatch[1];
+
+      // Extract title
+      const titleMatch = block.match(/class="s-item__title[^"]*"[^>]*>(?:<span[^>]*>[^<]*<\/span>)?([^<]+)/);
+      if (!titleMatch) continue;
+      const title = titleMatch[1].trim();
+      if (title === 'Shop on eBay' || !title) continue;
+
+      // Extract sold price (green price on sold listings)
+      const priceMatch = block.match(/s-item__price[^>]*>\s*(?:<[^>]+>)*\$([0-9,]+\.?\d*)/);
+      if (!priceMatch) continue;
+      const price = parseFloat(priceMatch[1].replace(',', ''));
+      if (!price || price <= 0) continue;
+
+      // Extract sold date — format like "Sold  Jan 15, 2026"
+      const dateMatch = block.match(/Sold\s+(\w+ \d+,?\s*\d{4})/i) ||
+                        block.match(/s-item__ended-date[^>]*>([^<]+)/);
+      let saleDate = null;
+      if (dateMatch) {
+        try {
+          const parsed = new Date(dateMatch[1].trim());
+          if (!isNaN(parsed)) saleDate = parsed.toISOString().split('T')[0];
+        } catch {}
+      }
+
+      // Extract condition
+      const condMatch = block.match(/s-item__condition[^>]*>([^<]+)/);
+      const condition = condMatch ? condMatch[1].trim() : '';
+
+      allItems.push({
+        itemId,
+        title,
+        price: { value: String(price) },
+        condition,
+        itemEndDate: saleDate ? new Date(saleDate).toISOString() : new Date().toISOString(),
+        image: null,
+        thumbnailImages: [],
+      });
+      foundOnPage++;
+    }
+
+    if (foundOnPage === 0) break; // no more results
+    await sleep(500);
   }
 
   return allItems;
@@ -142,17 +193,20 @@ async function searchBrowseAPI(query, token) {
 async function searchBySetNumber(set, token) {
   const query = buildQuery(set);
 
-  // Try Finding API first (90-day sold history)
+  // Try scraping eBay sold listings page first
   try {
-    const items = await searchFindingAPI(query);
-    return { items, total: items.length, source: 'finding' };
-  } catch (findingErr) {
-    // Fall back to Browse API if Finding API fails
+    const items = await searchSoldListings(query);
+    if (items.length > 0) {
+      return { items, total: items.length, source: 'sold_scrape' };
+    }
+    throw new Error('No sold items found from scrape');
+  } catch (scrapeErr) {
+    // Fall back to Finding API
     try {
-      const items = await searchBrowseAPI(query, token);
-      return { items, total: items.length, source: 'browse', warning: `Finding API failed: ${findingErr.message}` };
-    } catch (browseErr) {
-      return { error: `Both APIs failed. Finding: ${findingErr.message} | Browse: ${browseErr.message}` };
+      const items = await searchFindingAPI(query);
+      return { items, total: items.length, source: 'finding' };
+    } catch (findingErr) {
+      return { error: `Scrape failed: ${scrapeErr.message} | Finding API: ${findingErr.message}` };
     }
   }
 }
