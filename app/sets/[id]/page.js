@@ -76,50 +76,62 @@ export default function SetDetailPage({ params }) {
   const buildChartPoints = (priceList) => {
     if (!priceList.length) return []
 
-    const uniqueDates = [...new Set(priceList.map(p => p.sale_date).filter(Boolean))]
-    const allSameDate = uniqueDates.length <= 2
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+    const withDates = priceList.filter(p => p.sale_date)
 
-    if (!allSameDate) {
-      const monthlyData = {}
-      priceList.forEach(p => {
-        const month = p.sale_date?.substring(0, 7)
-        if (!month) return
-        if (!monthlyData[month]) monthlyData[month] = []
-        monthlyData[month].push(parseFloat(p.sale_price))
+    const groupBy = (fn, labelFn) => {
+      const map = {}
+      withDates.forEach(p => {
+        const key = fn(p.sale_date)
+        if (!map[key]) map[key] = []
+        map[key].push(parseFloat(p.sale_price))
       })
-      return Object.entries(monthlyData)
+      return Object.entries(map)
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([month, vals]) => {
-          const [year, mon] = month.split('-')
-          const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-          const label = `${monthNames[parseInt(mon) - 1]} '${year.substring(2)}`
-          return {
-            label,
-            month,
-            avg: vals.reduce((s, v) => s + v, 0) / vals.length,
-            count: vals.length,
-          }
-        })
-    } else {
-      // Sort by date first, fall back to price if no dates
-      const sorted = [...priceList].sort((a, b) => {
-        if (a.sale_date && b.sale_date) return a.sale_date.localeCompare(b.sale_date)
-        return parseFloat(a.sale_price) - parseFloat(b.sale_price)
-      })
-      const bucketSize = Math.max(1, Math.floor(sorted.length / 8))
-      const buckets = []
-      for (let i = 0; i < sorted.length; i += bucketSize) {
-        const chunk = sorted.slice(i, i + bucketSize)
-        const avg = chunk.reduce((s, p) => s + parseFloat(p.sale_price), 0) / chunk.length
-        // Use the date of the middle item in the bucket as label
-        const mid = chunk[Math.floor(chunk.length / 2)]
-        const label = mid.sale_date
-          ? new Date(mid.sale_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-          : `#${i + 1}`
-        buckets.push({ label, avg, count: chunk.length })
-      }
-      return buckets
+        .map(([key, vals]) => ({
+          label: labelFn(key),
+          key,
+          avg: vals.reduce((s, v) => s + v, 0) / vals.length,
+          count: vals.length,
+        }))
     }
+
+    // Try monthly first
+    const monthly = groupBy(
+      d => d.substring(0, 7),
+      k => { const [y, m] = k.split('-'); return `${monthNames[parseInt(m)-1]} '${y.substring(2)}` }
+    )
+    if (monthly.length >= 2) return monthly
+
+    // Try weekly
+    const weekly = groupBy(
+      d => {
+        const date = new Date(d)
+        const start = new Date(date)
+        start.setDate(date.getDate() - date.getDay())
+        return start.toISOString().substring(0, 10)
+      },
+      k => { const d = new Date(k); return `${monthNames[d.getMonth()]} ${d.getDate()}` }
+    )
+    if (weekly.length >= 2) return weekly
+
+    // Fall back to daily
+    const daily = groupBy(
+      d => d,
+      k => { const d = new Date(k); return `${monthNames[d.getMonth()]} ${d.getDate()}` }
+    )
+    if (daily.length >= 2) return daily
+
+    // Last resort: price distribution buckets (no date data)
+    const sorted = [...priceList].sort((a, b) => parseFloat(a.sale_price) - parseFloat(b.sale_price))
+    const bucketSize = Math.max(1, Math.floor(sorted.length / 8))
+    const buckets = []
+    for (let i = 0; i < sorted.length; i += bucketSize) {
+      const chunk = sorted.slice(i, i + bucketSize)
+      const avg = chunk.reduce((s, p) => s + parseFloat(p.sale_price), 0) / chunk.length
+      buckets.push({ label: `$${Math.round(avg)}`, avg, count: chunk.length })
+    }
+    return buckets
   }
 
   const chartPoints = buildChartPoints(filteredPrices)
