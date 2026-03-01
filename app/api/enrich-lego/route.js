@@ -133,10 +133,13 @@ async function enrichTheme(supabase, ourThemeName) {
     if (!bsSet) { notFound++; continue; }
 
     const update = {};
-    const price = bsSet.LEGOCom?.US?.retailPrice || bsSet.USRetailPrice;
+
+    // Retail price
+    const price = bsSet.LEGOCom?.US?.retailPrice || bsSet.LEGOCom?.UK?.retailPrice || bsSet.USRetailPrice;
     if (price && price > 0) update.retail_price = price;
 
-    const retireDate = bsSet.LEGOCom?.US?.dateLastAvailable;
+    // Retirement status
+    const retireDate = bsSet.LEGOCom?.US?.dateLastAvailable || bsSet.LEGOCom?.UK?.dateLastAvailable;
     const isRetired = bsSet.availability === 'Retired' ||
       (retireDate && new Date(retireDate) < new Date());
 
@@ -147,7 +150,30 @@ async function enrichTheme(supabase, ourThemeName) {
       update.is_retired = false;
     }
 
+    // Availability type (Retail, Promotional, LEGO exclusive, etc.)
+    if (bsSet.availability) update.availability = bsSet.availability;
+
+    // Core fields
     if (!set.piece_count && bsSet.pieces) update.piece_count = bsSet.pieces;
+    if (bsSet.minifigs) update.minifig_count = bsSet.minifigs;
+    if (bsSet.subtheme) update.subtheme = bsSet.subtheme;
+    if (bsSet.year) update.year = bsSet.year;
+    if (bsSet.packagingType) update.packaging_type = bsSet.packagingType;
+    if (bsSet.rating && bsSet.rating > 0) update.brickset_rating = bsSet.rating;
+    if (bsSet.reviewCount) update.review_count = bsSet.reviewCount;
+    if (bsSet.ageRange?.min) update.age_min = bsSet.ageRange.min;
+
+    // Launch date
+    const launchDate = bsSet.launchDate || bsSet.LEGOCom?.US?.dateFirstAvailable;
+    if (launchDate) update.launch_date = new Date(launchDate).toISOString().split('T')[0];
+
+    // Dimensions
+    if (bsSet.dimensions?.weight) update.weight_kg = bsSet.dimensions.weight;
+
+    // Tags from extendedData
+    if (bsSet.extendedData?.tags?.length) {
+      update.tags = bsSet.extendedData.tags;
+    }
 
     if (Object.keys(update).length > 0) updates.push({ id: set.id, ...update });
     else notFound++;
